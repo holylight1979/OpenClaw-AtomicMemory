@@ -8,7 +8,7 @@ echo.
 
 :: Start ngrok (for LINE webhook)
 echo [1/2] Starting ngrok...
-start "OpenClaw-ngrok" /min cmd /c "ngrok http 18789"
+start "" /b ngrok http 18789 >nul 2>&1
 timeout /t 4 /nobreak >nul
 
 :: Show ngrok URL
@@ -21,7 +21,7 @@ echo.
 
 :: Start OpenClaw Gateway
 echo [2/2] Starting OpenClaw Gateway...
-start "OpenClaw-Gateway" /min cmd /c "openclaw gateway"
+start "" /b openclaw gateway >nul 2>&1
 timeout /t 5 /nobreak >nul
 
 :: Verify
@@ -30,7 +30,7 @@ openclaw status 2>nul | findstr /C:"Gateway" /C:"Discord" /C:"LINE"
 echo.
 echo ========================================
 echo   OpenClaw is running!
-echo   ngrok + Gateway started (minimized)
+echo   ngrok + Gateway started (background)
 echo   Dashboard: http://127.0.0.1:18789/
 echo ========================================
 echo.
