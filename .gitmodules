@@ -1,0 +1,3 @@
+[submodule "workspace/ai-kb-framework"]
+	path = workspace/ai-kb-framework
+	url = https://github.com/holylight1979/ai-kb-framework.git

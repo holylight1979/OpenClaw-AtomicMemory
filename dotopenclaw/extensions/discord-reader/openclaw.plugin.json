@@ -1,0 +1,11 @@
+{
+  "id": "discord-reader",
+  "name": "Discord Reader",
+  "description": "Cross-channel Discord message reading tool. Allows any channel (including LINE) to read Discord messages.",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

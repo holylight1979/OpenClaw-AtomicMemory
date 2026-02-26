@@ -1,0 +1,22 @@
+# Real secrets
+.env
+
+# OpenClaw auto-generated (per-machine)
+sessions/
+identity/
+devices/
+cron/
+logs/
+canvas/
+*.bak*
+
+# Claude Code auto-generated
+backups/
+debug/
+cache/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*~
