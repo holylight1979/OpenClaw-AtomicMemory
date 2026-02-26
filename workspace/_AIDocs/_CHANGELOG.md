@@ -2,6 +2,17 @@
 
 ---
 
+## 2026-02-26 — 升級 v2026.2.25 + GitHub Repo
+
+- OpenClaw v2026.2.24 → v2026.2.25（`npm install -g openclaw@latest`）
+- Security audit: 0 CRITICAL（3 WARN 皆為既有項目）
+- 建立 GitHub repo: `holylight1979/OpenClaw-AtomicMemory`（Public）
+- 所有設定、workspace、plugin、Claude Code 設定打包進 repo
+- Secrets 用 `{{PLACEHOLDER}}` 替代，`.env.example` 列出所有需填值
+- ai-kb-framework 以 git submodule 引入
+- 寫 INSTALL.md（AI 可執行部署指南）+ README.md（人+AI 可讀）
+- 寫 OpenClaw-Start.bat / OpenClaw-Stop.bat（一鍵啟停）
+
 ## 2026-02-26 — 跨頻道讀取 Plugin
 
 - 發現 LINE plugin 不支援 message read（架構層級限制，非 config 問題）
