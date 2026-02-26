@@ -6,19 +6,15 @@ echo   OpenClaw - Stopping...
 echo ========================================
 echo.
 
-:: Kill ngrok
+:: Stop ngrok
 echo [1/2] Stopping ngrok...
 taskkill /F /IM ngrok.exe >nul 2>&1
 if %errorlevel% equ 0 (echo   ngrok stopped.) else (echo   ngrok was not running.)
 
-:: Kill OpenClaw Gateway (node process running openclaw gateway)
-echo [2/2] Stopping OpenClaw Gateway...
-set found=0
-for /f "tokens=2 delims==" %%i in ('wmic process where "CommandLine like '%%openclaw%%gateway%%'" get ProcessId /value 2^>nul ^| findstr "ProcessId"') do (
-    taskkill /F /PID %%i >nul 2>&1
-    set found=1
-)
-if %found% equ 1 (echo   Gateway stopped.) else (echo   Gateway was not running.)
+:: Stop gateway via native service management
+echo [2/2] Stopping gateway...
+openclaw gateway stop >nul 2>&1
+if %errorlevel% equ 0 (echo   Gateway stopped.) else (echo   Gateway was not running.)
 
 echo.
 echo ========================================
