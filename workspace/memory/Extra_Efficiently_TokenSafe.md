@@ -57,3 +57,4 @@
 | 2026-02-27 | LINE→Claude Bridge | 完整實作 bridge+plugins+MCP+hooks [固] |
 | 2026-02-27 | 控制面板 | WinForms .NET 9 控制面板 [固] |
 | 2026-02-27 | 記憶架構 | 分類按需載入 + CHANGELOG 滾動淘汰 [固] |
+| 2026-02-27 | 原子記憶格式 | Claude Code auto-memory 正式套用 atom 格式（Trigger/Confidence/行動段落）[固] |

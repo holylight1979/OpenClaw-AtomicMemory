@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-02-27 — 原子記憶格式套用到 Claude Code auto-memory
+
+- Claude Code 分類記憶檔改為正式 atom 格式（Scope/Confidence/Source/Last-used/Trigger/Privacy + 知識 + 行動）
+- `decisions.md`、`pitfalls.md`、`bridge.md` 全部加上 atom 元資料
+- `MEMORY.md` 改為 Atom Index，含 Trigger 表供按需載入判斷
+- 同步策略套用到 OpenClaw：AGENTS.md（CHANGELOG 滾動淘汰 + 記憶瘦身原則）、HEARTBEAT.md（自動維護任務）、Extra_Efficiently_TokenSafe.md（[固] 決策記錄）
+
 ## 2026-02-27 — 記憶系統重構
 
 - Claude auto-memory (`MEMORY.md`) 瘦身：136 行 → ~30 行（索引+高頻事實）
