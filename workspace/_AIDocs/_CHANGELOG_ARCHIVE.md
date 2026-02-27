@@ -4,6 +4,17 @@
 
 ---
 
+## 2026-02-27 — OpenClawPanel Bug Fixes（啟停修正）
+
+- Gateway/Bridge 停不掉 → `KillByPort` + `Get-CimInstance Win32_Process` + `taskkill /T /F`
+- ngrok 啟動失敗: macOS binary → 直接指定 `ngrok.exe` 完整路徑
+
+## 2026-02-27 — Plugin 圖片格式修正 + Control Panel + Bridge
+
+- Plugin 圖片回傳改為 OpenAI `image_url` + data URL 格式
+- OpenClawPanel: .NET 9 WinForms 控制面板（深色主題、三服務色狀態）
+- LINE → Claude Code Bridge: bridge server:3847 + computer-use/claude-bridge plugins + MCP + hooks
+
 ## 2026-02-26 — 服務化啟停腳本
 
 - Start/Stop bat 改用 `openclaw gateway install/start/stop` 原生服務管理

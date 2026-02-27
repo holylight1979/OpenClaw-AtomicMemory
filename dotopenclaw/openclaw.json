@@ -107,7 +107,14 @@
       "channelAccessToken": "{{LINE_CHANNEL_ACCESS_TOKEN}}",
       "channelSecret": "{{LINE_CHANNEL_SECRET}}",
       "dmPolicy": "pairing",
-      "name": "光仔AI-LINE"
+      "name": "光仔AI-LINE",
+      "groupPolicy": "allowlist",
+      "groups": {
+        "{{LINE_GROUP_ID}}": {
+          "requireMention": false,
+          "allowFrom": ["*"]
+        }
+      }
     }
   },
   "gateway": {

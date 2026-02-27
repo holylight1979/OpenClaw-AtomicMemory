@@ -4,6 +4,14 @@
 
 ---
 
+## 2026-02-28 — 修復 LINE 群組訊息靜默丟棄
+
+- **根因**：`groupPolicy: "allowlist"` 需三層設定齊全 — policy + groups.{id} + allowFrom
+- 缺少 `allowFrom` 時，`shouldProcessLineEvent()` 在 `effectiveGroupAllow.hasEntries` 檢查失敗 → 靜默丟棄（200 OK 無 log）
+- **修復**：LINE group config 加入 `"allowFrom": ["*"]`
+- 附帶修復：`~/.openclaw/openclaw.json` 恢復為最小設定（避免與 workspace config 合併衝突）
+- 新增 atom `openclaw-config-intelligence.md`：記錄 OpenClaw config 參數語義圖 + 依賴鏈 + 除錯口訣
+
 ## 2026-02-27 — 新機部署收尾 + 路徑修正
 
 - Bridge Server: `DEFAULT_CWD` → `E:\OpenClawWorkSpace`、`CLAUDE_CLI` 版本 2.1.59→2.1.61
@@ -51,13 +59,3 @@
 - openclaw.json 模板加入新 plugin、.env.example 加入 GATEWAY_TOKEN/BRIDGE_TOKEN
 - 秘密安全檢查通過（notify MCP 的硬編碼 ID 改為 env var + placeholder）
 
-## 2026-02-27 — OpenClawPanel Bug Fixes（啟停修正）
-
-- Gateway/Bridge 停不掉 → `KillByPort` + `Get-CimInstance Win32_Process` + `taskkill /T /F`
-- ngrok 啟動失敗: macOS binary → 直接指定 `ngrok.exe` 完整路徑
-
-## 2026-02-27 — Plugin 圖片格式修正 + Control Panel + Bridge
-
-- Plugin 圖片回傳改為 OpenAI `image_url` + data URL 格式
-- OpenClawPanel: .NET 9 WinForms 控制面板（深色主題、三服務狀態）
-- LINE → Claude Code Bridge: bridge server:3847 + computer-use/claude-bridge plugins + MCP + hooks
