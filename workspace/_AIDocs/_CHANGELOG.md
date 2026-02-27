@@ -4,6 +4,20 @@
 
 ---
 
+## 2026-02-27 — 修復 Gateway 啟動失敗（config enum 值錯誤）
+
+- `tools.exec.security`: `"allow"` → `"full"`（合法值: deny/allowlist/full）
+- `tools.exec.ask`: `"never"` → `"off"`（合法值: off/on-miss/always）
+- 原因：先前「全面解鎖」改動寫入了不存在的 enum 值，Gateway 配置驗證失敗拒絕啟動
+
+## 2026-02-27 — 全面解鎖 OpenClaw 自修改權限
+
+- `tools.deny`: 移除 `group:fs`、`group:automation`、`group:runtime`、`gateway`、`cron`、`canvas`、`nodes`，僅保留 `sessions_spawn`、`sessions_send`
+- `tools.fs.workspaceOnly`: `true` → `false`（允許存取 workspace 外檔案）
+- `tools.exec.security`: `deny` → `allow`（解鎖指令執行）
+- `tools.elevated.enabled`: `false` → `true`（啟用提權操作）
+- 安全模型從「config deny 補償 sandbox off」轉為「全面放權 + 行為觀察」
+
 ## 2026-02-27 — 原子記憶格式套用到 Claude Code auto-memory
 
 - Claude Code 分類記憶檔改為正式 atom 格式（Scope/Confidence/Source/Last-used/Trigger/Privacy + 知識 + 行動）

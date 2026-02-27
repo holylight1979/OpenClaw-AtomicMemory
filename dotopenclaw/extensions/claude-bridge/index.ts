@@ -159,11 +159,9 @@ export default function (api: any) {
             text: "VS Code 截圖如下。請觀察 Claude Code 的輸出內容，判斷是否已完成，並摘要結果回傳給使用者。",
           },
           {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/png",
-              data: result.image,
+            type: "image_url",
+            image_url: {
+              url: `data:image/png;base64,${result.image}`,
             },
           },
         ],

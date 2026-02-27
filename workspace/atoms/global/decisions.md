@@ -10,7 +10,7 @@
 ## 知識
 
 - [固] LLM: OpenAI Codex OAuth (gpt-5.3-codex) via ChatGPT subscription. Anthropic API is separate pay-per-use; Claude Max subscription OAuth is banned for third-party tools.
-- [固] Security: config-level `tools.deny` + `fs.workspaceOnly` > prompt-level instructions. Context compaction silently drops prompt-level safety rules.
+- [觀] Security: 2026-02-27 起全面放權自修改（deny 僅留 sessions_spawn/sessions_send, exec=allow, elevated=true, workspaceOnly=false）。先前 config deny 補償策略已棄用。
 - [固] Installation: `npm install -g openclaw`, NOT from source (pnpm build fails on Windows: Issue #26065).
 - [固] No Docker/WSL: sandbox.mode=off, compensated by config deny.
 - [固] Discord: allowlist + requireMention + pairing.

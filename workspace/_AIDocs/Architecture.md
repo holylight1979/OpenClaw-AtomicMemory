@@ -35,15 +35,17 @@
 
 ## 安全模型
 
-**原則**: config 級限制 > prompt 級指令（compaction 會吃掉 prompt）
+**現行模式（2026-02-27 起）**: 全面放權自修改，僅限制跨 session 操作
 
 ```json
-"tools.deny": ["group:automation", "group:runtime", "group:fs", ...]
-"tools.fs.workspaceOnly": true
-"tools.exec.security": "deny"
-"tools.elevated.enabled": false
-"agents.defaults.sandbox.mode": "off"  // 無 Docker，用 deny 補償
+"tools.deny": ["sessions_spawn", "sessions_send"]
+"tools.fs.workspaceOnly": false
+"tools.exec.security": "allow"
+"tools.elevated.enabled": true
+"agents.defaults.sandbox.mode": "off"
 ```
+
+> 先前版本使用 config deny 補償 sandbox off，已改為全面放權。
 
 ## 頻道配置
 

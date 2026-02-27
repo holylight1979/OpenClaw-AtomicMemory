@@ -12,9 +12,11 @@
 - ChatGPT 訂閱允許 Codex OAuth
 - 確認次數：2（初選 Anthropic → 碰壁 → 轉 Codex）
 
-### [固] 安全策略：config deny，不靠 prompt
-- 原因：context compaction 會靜默丟棄 prompt 級安全指令
-- tools.deny 列表 + fs.workspaceOnly 是唯一可靠方式
+### [觀] 安全策略：全面放權自修改（2026-02-27 起）
+- 原先：config deny + fs.workspaceOnly 補償 sandbox off
+- 現行：移除 fs/automation/runtime/gateway/cron/canvas/nodes deny，僅保留 sessions_spawn/sessions_send
+- exec.security=allow、elevated.enabled=true、fs.workspaceOnly=false
+- 風險意識：無 sandbox + 無 deny = 完全信任 agent 行為，靠 prompt + 觀察控制
 
 ### [固] 不用 Docker / WSL
 - 原因：使用者偏好輕量，公司電腦限制多
@@ -58,3 +60,4 @@
 | 2026-02-27 | 控制面板 | WinForms .NET 9 控制面板 [固] |
 | 2026-02-27 | 記憶架構 | 分類按需載入 + CHANGELOG 滾動淘汰 [固] |
 | 2026-02-27 | 原子記憶格式 | Claude Code auto-memory 正式套用 atom 格式（Trigger/Confidence/行動段落）[固] |
+| 2026-02-27 | 安全策略 | config deny 補償 → 全面放權自修改 [固→觀] |

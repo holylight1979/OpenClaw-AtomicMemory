@@ -63,11 +63,9 @@ export default function (api: any) {
       return {
         content: [
           {
-            type: "image",
-            source: {
-              type: "base64",
-              media_type: "image/png",
-              data: result.image,
+            type: "image_url",
+            image_url: {
+              url: `data:image/png;base64,${result.image}`,
             },
           },
         ],
