@@ -4,6 +4,18 @@
 
 ---
 
+## 2026-02-27 — 新機部署收尾 + 路徑修正
+
+- Bridge Server: `DEFAULT_CWD` → `E:\OpenClawWorkSpace`、`CLAUDE_CLI` 版本 2.1.59→2.1.61
+- Bridge Server: notify 函式改用 `OPENCLAW_CONFIG` 常數（不再硬編碼 `~/.openclaw/`）
+- Bridge Server: LINE notify 讀取 key 修正 `line.token` → `line.channelAccessToken`
+- ngrok: 3.3.1→3.36.1（舊版被 ngrok 拒絕認證）
+- LINE Webhook: 正確路徑為 `/line/webhook`（非 `/channels/line/webhook`）
+- LINE 配對: approve sender U556bc083405a12bb3a9d2dbb66983386
+- Claude Code hooks: 新增 Stop hook → Bridge → Discord #1476967208461664378 通知
+- Start.bat: 路徑修正 + `set OPENCLAW_HOME`，已複製到桌面
+- INSTALL.md 路徑勘誤：LINE webhook 路徑應為 `/line/webhook`
+
 ## 2026-02-27 — 修復 Gateway 啟動失敗（config enum 值錯誤）
 
 - `tools.exec.security`: `"allow"` → `"full"`（合法值: deny/allowlist/full）

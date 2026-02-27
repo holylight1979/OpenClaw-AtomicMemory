@@ -6,6 +6,8 @@ echo   OpenClaw - Starting...
 echo ========================================
 echo.
 
+set OPENCLAW_HOME=E:\OpenClawWorkSpace
+
 :: Step 1: Install gateway as Scheduled Task (idempotent, safe to re-run)
 echo [1/4] Installing gateway service (if needed)...
 openclaw gateway install >nul 2>&1
@@ -18,7 +20,7 @@ timeout /t 3 /nobreak >nul
 :: Step 3: Start Bridge Service (hidden window)
 echo [3/4] Starting bridge service...
 set BRIDGE_TOKEN=openclaw-bridge-default-token
-powershell -Command "Start-Process node -ArgumentList 'C:\OpenClawWorkspace\scripts\openclaw-bridge-server.js' -WindowStyle Hidden"
+powershell -Command "Start-Process node -ArgumentList 'E:\OpenClawWorkSpace\OpenClaw-AtomicMemory\scripts\openclaw-bridge-server.js' -WindowStyle Hidden"
 timeout /t 2 /nobreak >nul
 
 :: Step 4: Start ngrok (hidden window, no console flash)

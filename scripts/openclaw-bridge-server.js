@@ -14,7 +14,9 @@ const fs = require("fs");
 const PORT = parseInt(process.env.BRIDGE_PORT || "3847", 10);
 const HOST = "127.0.0.1";
 const AUTH_TOKEN = process.env.BRIDGE_TOKEN || "openclaw-bridge-default-token";
-const DEFAULT_CWD = process.env.BRIDGE_CWD || "C:\\OpenClawWorkspace";
+const DEFAULT_CWD = process.env.BRIDGE_CWD || "E:\\OpenClawWorkSpace";
+const OPENCLAW_HOME = process.env.OPENCLAW_HOME || DEFAULT_CWD;
+const OPENCLAW_CONFIG = path.join(OPENCLAW_HOME, ".openclaw", "openclaw.json");
 const LOG_FILE = path.join(DEFAULT_CWD, "logs", "bridge.log");
 const CLAUDE_CLI =
   process.env.CLAUDE_CLI ||
@@ -22,7 +24,7 @@ const CLAUDE_CLI =
     process.env.USERPROFILE || "",
     ".vscode",
     "extensions",
-    "anthropic.claude-code-2.1.59-win32-x64",
+    "anthropic.claude-code-2.1.61-win32-x64",
     "resources",
     "native-binary",
     "claude.exe"
@@ -385,12 +387,7 @@ async function handleNotifyDiscord(body) {
   // Read Discord token from openclaw.json
   let token;
   try {
-    const configPath = path.join(
-      process.env.USERPROFILE || "",
-      ".openclaw",
-      "openclaw.json"
-    );
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
+    const config = JSON.parse(fs.readFileSync(OPENCLAW_CONFIG, "utf-8"));
     token = config?.channels?.discord?.token;
   } catch (e) {
     return { success: false, error: "Cannot read Discord token from openclaw.json" };
@@ -424,13 +421,8 @@ async function handleNotifyLine(body) {
 
   let token;
   try {
-    const configPath = path.join(
-      process.env.USERPROFILE || "",
-      ".openclaw",
-      "openclaw.json"
-    );
-    const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-    token = config?.channels?.line?.token;
+    const config = JSON.parse(fs.readFileSync(OPENCLAW_CONFIG, "utf-8"));
+    token = config?.channels?.line?.channelAccessToken;
   } catch (e) {
     return { success: false, error: "Cannot read LINE token from openclaw.json" };
   }
