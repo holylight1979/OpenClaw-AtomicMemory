@@ -25,6 +25,8 @@
 ### [固] ngrok 免費方案做 LINE webhook
 - 原因：最簡單的方式取得公開 HTTPS URL
 - 代價：URL 不固定，重啟要手動更新 LINE Console
+- LINE webhook 路徑：`/line/webhook`（非 `/channels/line/webhook`）
+- ngrok 版本：v3.36.1（3.3.1 被拒絕，需 ≥3.20.0）
 
 ### [固] Gateway 執行模式：Scheduled Task 服務
 - 已改用 `openclaw gateway install/start/stop` 原生服務管理
@@ -32,7 +34,7 @@
 - 確認次數：2（前台 → 服務化）
 
 ### [固] 控制面板：WinForms (.NET 9)
-- 路徑：`C:\OpenClawWorkspace\OpenClawPanel\`
+- 路徑：`E:\OpenClawWorkSpace\OpenClawPanel\`
 - 用途：GUI 管理 Gateway/Bridge/ngrok 三服務的啟停與狀態
 - 選擇 WinForms 原因：使用者指定 WinForm，深色主題簡潔直觀
 
@@ -61,3 +63,4 @@
 | 2026-02-27 | 記憶架構 | 分類按需載入 + CHANGELOG 滾動淘汰 [固] |
 | 2026-02-27 | 原子記憶格式 | Claude Code auto-memory 正式套用 atom 格式（Trigger/Confidence/行動段落）[固] |
 | 2026-02-27 | 安全策略 | config deny 補償 → 全面放權自修改 [固→觀] |
+| 2026-02-27 | 新機部署 | E:\OpenClawWorkSpace — Bridge 路徑修正、ngrok 升級、LINE 配對完成 |
