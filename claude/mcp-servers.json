@@ -1,0 +1,21 @@
+{
+  "_comment": "Claude Code MCP servers — merge into ~/.claude.json 'mcpServers' key",
+  "computer-use": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@anthropic-ai/computer-use"],
+    "env": {}
+  },
+  "browser-use": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["-y", "@anthropic-ai/browser-use"],
+    "env": {}
+  },
+  "openclaw-notify": {
+    "type": "stdio",
+    "command": "node",
+    "args": ["C:\\OpenClawWorkspace\\scripts\\openclaw-notify-mcp.js"],
+    "env": {}
+  }
+}

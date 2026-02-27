@@ -24,7 +24,7 @@ export default function (api: any) {
           type: "string",
           description:
             "Discord channel ID (numeric string). " +
-            "Ask the user for the channel ID if not known.",
+            "Known channels: #一般 = 1065188929529200723",
         },
         limit: {
           type: "integer",

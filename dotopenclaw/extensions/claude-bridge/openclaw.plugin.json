@@ -1,0 +1,11 @@
+{
+  "id": "claude-bridge",
+  "name": "Claude Code Bridge",
+  "description": "Execute tasks via Claude Code: UI injection into VS Code or CLI headless fallback. Triggered by /vscc, /vsccc, /vscodeclaudecode or semantic phrases.",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "_comment": "Claude Code hooks — copy to ~/.claude/settings.json (merge into existing 'hooks' key)",
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "curl -s -X POST http://127.0.0.1:3847/notify/discord -H \"Authorization: Bearer {{BRIDGE_TOKEN}}\" -H \"Content-Type: application/json\" -d \"{\\\"channelId\\\":\\\"{{DISCORD_CHANNEL_ID}}\\\",\\\"message\\\":\\\"Claude Code session 結束了。\\\"}\" > /dev/null 2>&1 || true",
+          "async": true
+        }
+      ]
+    }
+  ]
+}

@@ -127,13 +127,21 @@
     "allow": [
       "line",
       "discord-reader",
-      "discord"
+      "discord",
+      "computer-use",
+      "claude-bridge"
     ],
     "entries": {
       "line": {
         "enabled": true
       },
       "discord-reader": {
+        "enabled": true
+      },
+      "computer-use": {
+        "enabled": true
+      },
+      "claude-bridge": {
         "enabled": true
       }
     }

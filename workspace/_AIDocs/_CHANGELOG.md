@@ -2,6 +2,38 @@
 
 ---
 
+## 2026-02-27 — LINE → Claude Code Bridge + Computer Use
+
+- **Bridge Service** (`scripts/openclaw-bridge-server.js`): 統一 HTTP 後端，127.0.0.1:3847
+  - Computer-use endpoints: screenshot, click, type, key, window-focus, window-list, clipboard
+  - Claude CLI headless endpoint: `/claude/execute`（備用方案）
+  - Notification endpoints: `/notify/discord`, `/notify/line`（直接打 REST API 發訊息）
+  - 純 Node.js，零 npm 依賴，Bearer token 認證
+- **OpenClaw Plugins**:
+  - `computer-use` plugin（7 個桌面操作工具，fetch 到 bridge）
+  - `claude-bridge` plugin（inject/observe/execute 3 工具，UI 自動化注入 VS Code Claude）
+- **Claude Code MCP Servers**:
+  - `@anthropic-ai/computer-use` — 官方 computer-use 工具
+  - `@anthropic-ai/browser-use` — 瀏覽器自動化
+  - `openclaw-notify` — 自建 MCP，提供 `notify_user` 工具（發 Discord/LINE 通知）
+- **Claude Code Hooks**: Stop hook 自動發 Discord 通知（session 結束時）
+- **Config 變更**:
+  - `openclaw.json`: plugins.allow 加入 computer-use, claude-bridge
+  - `~/.claude.json`: 加入 3 個 MCP server
+  - `~/.claude/settings.json`: 加入 Stop hook
+  - `~/.claude/CLAUDE.md`: 加入「回應語言：繁體中文」
+- **Startup scripts**: OpenClaw-Start.bat 加入 bridge 啟動（step 3/4），Stop.bat 加入 bridge 停止
+- **TOOLS.md**: 加入觸發指令文件（/vscc, /vsccc, /vscodeclaudecode + 語意判斷）
+- 測試通過：health, auth, window-list, screenshot(1.5MB), key, clipboard, window-focus
+
+## 2026-02-26 — 服務化啟停腳本
+
+- Start/Stop bat 改用 `openclaw gateway install/start/stop` 原生服務管理
+- ngrok 改用 `PowerShell Start-Process -WindowStyle Hidden`（零視窗）
+- 移除手動 `start /b` 和 wmic process hunting（不可靠）
+- 建立 `MEMORY.md`（OpenClaw Agent 長期記憶，之前漏建）
+- 決策升級：Gateway 執行模式 [觀] → [固] Scheduled Task
+
 ## 2026-02-26 — 升級 v2026.2.25 + GitHub Repo
 
 - OpenClaw v2026.2.24 → v2026.2.25（`npm install -g openclaw@latest`）

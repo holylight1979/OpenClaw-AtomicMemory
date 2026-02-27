@@ -1,0 +1,11 @@
+{
+  "id": "computer-use",
+  "name": "Computer Use",
+  "description": "Desktop automation: screenshot, mouse, keyboard, window management. Calls local bridge service.",
+  "version": "1.0.0",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
