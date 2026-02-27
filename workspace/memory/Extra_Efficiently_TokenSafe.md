@@ -24,10 +24,23 @@
 - 原因：最簡單的方式取得公開 HTTPS URL
 - 代價：URL 不固定，重啟要手動更新 LINE Console
 
-### [觀] Gateway 前台執行模式
-- 目前未安裝為 Scheduled Task
-- 使用者尚未決定是否需要持久服務
-- 觸及時確認
+### [固] Gateway 執行模式：Scheduled Task 服務
+- 已改用 `openclaw gateway install/start/stop` 原生服務管理
+- Start.bat: install → start → ngrok via PowerShell Hidden
+- 確認次數：2（前台 → 服務化）
+
+### [固] 控制面板：WinForms (.NET 9)
+- 路徑：`C:\OpenClawWorkspace\OpenClawPanel\`
+- 用途：GUI 管理 Gateway/Bridge/ngrok 三服務的啟停與狀態
+- 選擇 WinForms 原因：使用者指定 WinForm，深色主題簡潔直觀
+
+### [固] 記憶架構：分類按需載入 + 滾動淘汰
+- **MEMORY.md 只放高頻事實**（~30 行），不堆積歷史細節
+- **完整決策放本檔案**（Extra_Efficiently_TokenSafe.md），按需讀取
+- **CHANGELOG 滾動淘汰**：`_CHANGELOG.md` 保留最近 ~8 筆，舊條目移至 `_CHANGELOG_ARCHIVE.md`
+- **HEARTBEAT 自動維護**：heartbeat 時檢查 CHANGELOG 條目數量和 MEMORY.md 行數
+- 原則：常態載入最小化，細節按需深入
+- 確認次數：1（使用者主動提出）
 
 ---
 
@@ -39,5 +52,8 @@
 | 2026-02-26 | 安全策略 | 確認 config deny 方針 [觀→固] |
 | 2026-02-26 | 不用 Docker | 確認 [固] |
 | 2026-02-26 | ngrok 免費方案 | 初始記錄 [固] |
-| 2026-02-26 | Gateway 模式 | 初始記錄 [觀] |
+| 2026-02-26 | Gateway 模式 | 前台 → 服務化 [觀→固] |
 | 2026-02-26 | 知識庫建立 | 初始化 _AIDocs 與記憶工作流 |
+| 2026-02-27 | LINE→Claude Bridge | 完整實作 bridge+plugins+MCP+hooks [固] |
+| 2026-02-27 | 控制面板 | WinForms .NET 9 控制面板 [固] |
+| 2026-02-27 | 記憶架構 | 分類按需載入 + CHANGELOG 滾動淘汰 [固] |

@@ -26,3 +26,5 @@
 - 2026-02-26：發現 LINE plugin 不支援 message read → 建 discord-reader plugin 解決
 - 2026-02-26：所有設定打包至 GitHub repo (OpenClaw-AtomicMemory)
 - 2026-02-26：升級 v2026.2.24 → v2026.2.25
+- 2026-02-27：LINE → Claude Code Bridge 完整整合（bridge server + plugins + MCP + hooks）
+- 2026-02-27：記憶架構重構 — 分類按需載入 + CHANGELOG 滾動淘汰（見 AGENTS.md + HEARTBEAT.md）

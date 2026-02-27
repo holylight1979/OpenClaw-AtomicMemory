@@ -37,6 +37,11 @@ Technical facts, architecture, and changelog live in `_AIDocs/`:
 - **New discovery**: Update or create relevant `_AIDocs/*.md` and update `_INDEX.md`
 - **Never guess**: If unsure about architecture facts, check `_AIDocs/` or source first
 
+**CHANGELOG 滾動淘汰：**
+- `_CHANGELOG.md` 只保留最近的條目（約 5-8 筆）
+- 舊條目移至 `_CHANGELOG_ARCHIVE.md`（按需查閱，不主動載入）
+- 每次新增 changelog 時，若條目超過 8 筆，將最舊的移至 archive
+
 ### 🧬 Atomic Memory — 原子記憶系統
 
 Knowledge is stored as **atoms** — minimal, composable units with source tracing and confidence levels. Full spec in `skills/atomic-memory/SKILL.md`.
@@ -82,6 +87,12 @@ Then update relevant atoms, `_AIDocs/_CHANGELOG.md`, and promote staging items a
 - Write significant events, thoughts, decisions, opinions, lessons learned
 - This is your curated memory — the distilled essence, not raw logs
 - Over time, review your daily files and update MEMORY.md with what's worth keeping
+
+**記憶管理原則：常態載入最小化，細節按需深入**
+- `MEMORY.md` 只放高頻事實和摘要（控制在 ~30 行以內）
+- 完整決策記錄放在 `memory/Extra_Efficiently_TokenSafe.md`（按需讀取）
+- 避免在 MEMORY.md 中堆積歷史細節 — 每次寫入前思考「這是每個 session 都需要的嗎？」
+- 不是每個 session 都需要的 → 放到對應分類檔或 daily notes
 
 ### 📝 Write It Down - No "Mental Notes"!
 
