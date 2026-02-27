@@ -1,5 +1,5 @@
 {
-  "_comment": "Claude Code MCP servers — merge into ~/.claude.json 'mcpServers' key",
+  "_comment": "Claude Code MCP servers — merge into ~/.claude.json 'mcpServers' key. Replace {{OPENCLAW_WORKSPACE}} with actual workspace path (e.g. C:\\OpenClawWorkspace)",
   "computer-use": {
     "type": "stdio",
     "command": "npx",
@@ -15,7 +15,7 @@
   "openclaw-notify": {
     "type": "stdio",
     "command": "node",
-    "args": ["C:\\OpenClawWorkspace\\scripts\\openclaw-notify-mcp.js"],
+    "args": ["{{OPENCLAW_WORKSPACE}}\\scripts\\openclaw-notify-mcp.js"],
     "env": {}
   }
 }

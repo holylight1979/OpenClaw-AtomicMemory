@@ -34,7 +34,9 @@ OpenClaw AI Agent 的完整配置包，包含跨平台通訊（Discord + LINE）
 │
 ├── claude/                       # ~/.claude/ 的設定（Claude Code 專用）
 │   ├── CLAUDE.md                 # 全域工作流引擎
-│   └── commands/                 # 自訂 slash commands
+│   ├── commands/                 # 自訂 slash commands
+│   ├── hooks.json                # Hooks 範本（session 結束通知）
+│   └── mcp-servers.json          # MCP Servers 範本（computer-use 等）
 │
 └── scripts/                      # 一鍵啟動/關閉腳本
     ├── OpenClaw-Start.bat
@@ -52,7 +54,8 @@ OpenClaw AI Agent 的完整配置包，包含跨平台通訊（Discord + LINE）
 
 2. 複製 `.env.example` → `.env`，填入你的 token 和 ID
 
-3. 照 [INSTALL.md](INSTALL.md) 執行部署
+3. 全新安裝：照 [INSTALL.md](INSTALL.md) 執行部署
+4. 已有安裝、只需同步設定：照 [SYNC.md](SYNC.md) 執行
 
 ---
 
@@ -68,12 +71,13 @@ OpenClaw AI Agent 的完整配置包，包含跨平台通訊（Discord + LINE）
 - Scope 層級：global → channel → user → merged
 - 跨平台身份映射（Discord + LINE → 統一 session）
 
-### 安全配置
-- `tools.deny`：禁用高風險工具群組（automation / runtime / fs）
-- `fs.workspaceOnly`：限制檔案存取範圍
-- `exec.security: "deny"`：禁止任意指令執行
-- `elevated.enabled: false`：禁用提權
-- `sandbox.mode: "off"`：無 Docker，以 config 級限制補償
+### 安全配置（2026-02-27 起：全面放權模式）
+- `tools.deny`：僅限制 `sessions_spawn`、`sessions_send`（跨 session 操作）
+- `fs.workspaceOnly: false`：允許存取 workspace 外檔案
+- `exec.security: "full"`：允許指令執行
+- `elevated.enabled: true`：啟用提權操作
+- `sandbox.mode: "off"`：無 Docker
+- 安全靠 prompt 級行為觀察 + 使用者信任控制
 
 ---
 

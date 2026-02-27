@@ -132,7 +132,19 @@ Copy-Item repo\claude\CLAUDE.md "$env:USERPROFILE\.claude\CLAUDE.md"
 
 # 自訂指令
 Copy-Item -Recurse repo\claude\commands\* "$env:USERPROFILE\.claude\commands\"
+
+# Hooks（session 結束時通知 Discord）
+# 需要合併到 ~/.claude/settings.json 的 "hooks" key
+# hooks.json 內有 {{BRIDGE_TOKEN}} 和 {{DISCORD_CHANNEL_ID}}，需替換為實際值
+
+# MCP Servers（computer-use, browser-use, openclaw-notify）
+# 需要合併到 ~/.claude.json 的 "mcpServers" key
+# 注意：openclaw-notify 的 args 路徑需改為本機實際 workspace 路徑
 ```
+
+> **hooks.json / mcp-servers.json**：這兩個檔案是範本，不能直接複製覆蓋。
+> 需要讀取目標檔案，將 repo 內容合併進去，並替換 placeholder。
+> 詳見 `repo/claude/hooks.json` 和 `repo/claude/mcp-servers.json` 內的 `_comment`。
 
 ### 3f. 啟動腳本
 
