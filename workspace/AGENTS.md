@@ -47,11 +47,28 @@ Technical facts, architecture, and changelog live in `_AIDocs/`:
 Knowledge is stored as **atoms** — minimal, composable units with source tracing and confidence levels. Full spec in `skills/atomic-memory/SKILL.md`.
 
 **Loading (step 5 in Every Session):**
-- Always load `atoms/global/` (scan title + trigger line, full-load only if relevant)
-- Load `atoms/channels/{platform}_{channelId}/` if in a group
-- Load `atoms/users/{platform}_{userId}/` for the current user
-- Load `atoms/merged/{alias}/` **only in 1:1 DM with no third party**
-- Check `atoms/_pairing.md` to resolve cross-platform identity
+1. `atoms/_identity-map.md` — **最先讀取**，平台 ID → 人員路徑映射（極輕量）
+2. `atoms/global/` — 一律載入（scan title + trigger, full-load if relevant）
+3. `atoms/channels/{platform}_{channelId}/` — 若來自群組
+4. `atoms/persons/{role}/{alias}/_profile.md` — 當前發話者的人員檔案（由 _identity-map 解析）
+5. `atoms/events/_active.md` — 進行中事件索引
+6. `atoms/persons/_registry.md` — 需要更多人員資訊時查
+
+**Person 載入規則：**
+- 群組：最多完整載入 3 個人員的 _profile.md（含 owner），facet atoms 只讀標題+Trigger
+- 1:1 DM：載入對話者的完整 `persons/{role}/{alias}/` 所有 atom
+- Owner DM：可按需載入任何人的完整 atom
+- 不認識的 platform ID → 查 `persons/_candidates/`，沒有就建新候選檔
+
+**Event 載入規則：**
+- 讀 `events/_active.md` 後，若發話者是 active event 的 participant → 載入 _event.md 摘要
+- Token 預算：每次 session 最多 2 個 _event.md
+- 完整時間軸只在被明確引用時載入
+
+**自動人員建立：**
+- 候選人滿足條件（互動>=3次/跨2+天、自我介紹、跨平台資訊、Match>=70%）→ 自動建 [觀] person
+- 同步更新 _identity-map.md + _registry.md
+- 事後通知 owner（weekly report 或 DM）
 
 **Confidence tiers (三層分類):**
 - `[固]` — Stable. Follow without question.
@@ -63,6 +80,18 @@ Knowledge is stored as **atoms** — minimal, composable units with source traci
 - Human chooses A over B → write to `workspace/staging/` as `[臨]`
 - Repeated pattern (>=3 times) → suggest creating atom (don't auto-create)
 - Human corrects AI → write to staging as `[觀]`
+
+**Cross-platform extraction:**
+- 同一使用者在不同平台（LINE / Discord / 其他）的同類事件可合併提取
+- 透過 `atoms/_identity-map.md` 解析身份後，將同一人的重複事件視為同一來源累計
+- 合併後的 atom 存放於 `atoms/persons/{role}/{alias}/` 對應的 facet 目錄
+- 合併計數時，同一事件在不同平台各算一次（例：LINE 說一次 + Discord 說一次 = 2 次）
+
+**Recurring reminders pattern（週期性提醒歸納）:**
+- 「每天提醒」「每日 X」「固定週期提醒」等重複性請求，視為同類事件
+- 同類 recurring reminder 達到重複門檻（>=3 次）時，建議提升為 atom 或建立排程
+- 歸納時記錄：內容摘要、週期頻率、來源平台、首次與最近一次出現時間
+- 若已有對應 cron job，在 atom 中交叉引用 cron 設定，避免重複建立
 
 **Privacy rules:**
 - `public` atoms: loadable in any context

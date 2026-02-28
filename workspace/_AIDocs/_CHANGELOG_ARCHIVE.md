@@ -4,6 +4,13 @@
 
 ---
 
+## 2026-02-27 — 記憶系統重構
+
+- Claude auto-memory (`MEMORY.md`) 瘦身：136 行 → ~30 行（索引+高頻事實）
+- 拆分為分類檔按需載入：`decisions.md`、`pitfalls.md`、`bridge.md`
+- CHANGELOG 滾動淘汰：保留最近條目，舊條目移至 `_CHANGELOG_ARCHIVE.md`
+- 預估 token 節省：每 session 自動載入從 ~5,000 tokens 降至 ~1,500 tokens
+
 ## 2026-02-27 — OpenClawPanel Bug Fixes（啟停修正）
 
 - Gateway/Bridge 停不掉 → `KillByPort` + `Get-CimInstance Win32_Process` + `taskkill /T /F`

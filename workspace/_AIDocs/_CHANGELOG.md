@@ -4,11 +4,20 @@
 
 ---
 
+## 2026-02-28 — 人員辨識記憶系統 Phase 2（背景辨識 + 通知）
+
+- 新增 `weekly-identity-report` cron job（每週三 21:00 Asia/Taipei，LINE DM 給 owner）
+  - 報告內容：新建/更新 person、跨平台配對疑似結果、候選人過期提醒、統計
+  - owner 可回覆「確定 A=B」合併人員或「刪除 X」移除候選人
+- HEARTBEAT.md 新增第 7 項「候選人背景比對」checklist
+  - 每次 heartbeat 掃描近 24h 活躍候選人，執行 5 維特徵比對（語言/時段/話題/互動/名稱）
+  - Match >= 70 標記到 _registry.md，14 天未互動自動歸檔
+
 ## 2026-02-28 — 修復 LINE 群組訊息靜默丟棄
 
 - **根因**：`groupPolicy: "allowlist"` 需三層設定齊全 — policy + groups.{id} + allowFrom
 - 缺少 `allowFrom` 時，`shouldProcessLineEvent()` 在 `effectiveGroupAllow.hasEntries` 檢查失敗 → 靜默丟棄（200 OK 無 log）
-- **修復**：LINE group config 加入 `"allowFrom": ["*"]`
+- **修復**：`groups.C22f692be7d5db74daa6cdb24882e749e` 加入 `"allowFrom": ["*"]`
 - 附帶修復：`~/.openclaw/openclaw.json` 恢復為最小設定（避免與 workspace config 合併衝突）
 - 新增 atom `openclaw-config-intelligence.md`：記錄 OpenClaw config 參數語義圖 + 依賴鏈 + 除錯口訣
 
@@ -45,17 +54,24 @@
 - `MEMORY.md` 改為 Atom Index，含 Trigger 表供按需載入判斷
 - 同步策略套用到 OpenClaw：AGENTS.md（CHANGELOG 滾動淘汰 + 記憶瘦身原則）、HEARTBEAT.md（自動維護任務）、Extra_Efficiently_TokenSafe.md（[固] 決策記錄）
 
-## 2026-02-27 — 記憶系統重構
-
-- Claude auto-memory (`MEMORY.md`) 瘦身：136 行 → ~30 行（索引+高頻事實）
-- 拆分為分類檔按需載入：`decisions.md`、`pitfalls.md`、`bridge.md`
-- CHANGELOG 滾動淘汰：保留最近條目，舊條目移至 `_CHANGELOG_ARCHIVE.md`
-- 預估 token 節省：每 session 自動載入從 ~5,000 tokens 降至 ~1,500 tokens
-
 ## 2026-02-27 — 設定同步到 GitHub
 
 - Bridge server + notify MCP + 2 新 plugin（computer-use, claude-bridge）上傳
 - Claude Code 設定參考檔：`hooks.json`、`mcp-servers.json`
 - openclaw.json 模板加入新 plugin、.env.example 加入 GATEWAY_TOKEN/BRIDGE_TOKEN
 - 秘密安全檢查通過（notify MCP 的硬編碼 ID 改為 env var + placeholder）
+
+## 2026-02-28 — 人員辨識記憶系統 Phase 1
+
+- 新增 `atoms/persons/` 語意化路徑結構：`{role}/{alias}/{facet}/`
+  - 路徑即 metadata：角色/權限/身份/分類可從路徑推斷
+  - owner/holylight/ 完整建立（_profile + personality + principles + interests + relationships + context）
+  - user/ 和 _candidates/ 目錄建立
+- 新增 `atoms/_identity-map.md`：平台 ID → 人員路徑高速映射（session 啟動最先讀取）
+- 新增 `atoms/persons/_registry.md`：人員詳細索引
+- 新增 `atoms/events/` 事件系統：多人共享記憶，_active.md 索引 + _event.md 格式
+- SKILL.md 新增 3 個 section：§身份映射、§人員辨識（含分類演算法+權限系統+背景比對）、§事件系統
+- AGENTS.md 重寫 Loading 規則（_identity-map 最先讀）、新增 Person/Event 載入規則
+- _pairing.md 擴充為多人格式（新增候選配對列表）
+- 遷移 `merged/holylight/preferences.md` → 拆分到 personality/ + principles/，刪除 merged/ 目錄
 
