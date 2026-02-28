@@ -46,6 +46,17 @@
 - 原則：常態載入最小化，細節按需深入
 - 確認次數：1（使用者主動提出）
 
+### [觀] 人員辨識系統 Phase 3：實戰後精修（2026-02-28 起）
+- Phase 1+2 已完成：語意化路徑、身份映射、事件系統、cron 週報、heartbeat 候選人比對
+- Phase 3 是**觀察驅動**的迭代，觸發條件：
+  - **權限精修** → 當 owner 需要收回/開放特定人員的權限時
+  - **比對權重調整** → 候選人背景比對出現明顯誤判（false positive/negative）時
+  - **Token 預算調整** → 群組對話載入 person atoms 導致回應變慢或 context 壓縮過快時
+  - **新增 facet** → 某個 facet 下 atom 累積 >= 5 個且有明顯子分類時，AI 提議拆分
+  - **事件系統調整** → 事件格式/生命週期參數在實際使用中不符合需求時
+- 計畫細節：`~/.claude/plans/lexical-noodling-rain.md` §Phase 3
+- 目標：累積 2-4 週實際互動數據後做首次 review
+
 ---
 
 ## 演化日誌
@@ -64,3 +75,5 @@
 | 2026-02-27 | 原子記憶格式 | Claude Code auto-memory 正式套用 atom 格式（Trigger/Confidence/行動段落）[固] |
 | 2026-02-27 | 安全策略 | config deny 補償 → 全面放權自修改 [固→觀] |
 | 2026-02-27 | 新機部署 | E:\OpenClawWorkSpace — Bridge 路徑修正、ngrok 升級、LINE 配對完成 |
+| 2026-02-28 | 人員辨識 Phase 1+2 | 語意化路徑+身份映射+事件系統+cron週報+heartbeat比對 完成 [觀] |
+| 2026-02-28 | Phase 3 追蹤 | 新增 [觀] 觀察項，觸發條件: 誤判/token壓力/facet溢出/權限需求 |
