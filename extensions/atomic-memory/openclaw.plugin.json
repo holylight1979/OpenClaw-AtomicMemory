@@ -1,0 +1,121 @@
+{
+  "id": "atomic-memory",
+  "kind": "memory",
+  "uiHints": {
+    "atomStorePath": {
+      "label": "Atom Store Path",
+      "placeholder": "~/.openclaw/memory/atoms",
+      "help": "Directory for atom markdown files",
+      "advanced": true
+    },
+    "chromadb.url": {
+      "label": "ChromaDB URL",
+      "placeholder": "http://localhost:8000",
+      "advanced": true
+    },
+    "chromadb.collection": {
+      "label": "ChromaDB Collection",
+      "placeholder": "openclaw_atoms",
+      "advanced": true
+    },
+    "ollama.baseUrl": {
+      "label": "Ollama URL",
+      "placeholder": "http://127.0.0.1:11434",
+      "advanced": true
+    },
+    "ollama.embeddingModel": {
+      "label": "Embedding Model",
+      "placeholder": "qwen3-embedding",
+      "help": "Ollama model for text embeddings"
+    },
+    "ollama.extractionModel": {
+      "label": "Extraction Model",
+      "placeholder": "qwen3:1.7b",
+      "help": "Ollama model for knowledge extraction"
+    },
+    "autoRecall": {
+      "label": "Auto-Recall",
+      "help": "Inject relevant atom memories into agent context automatically"
+    },
+    "autoCapture": {
+      "label": "Auto-Capture",
+      "help": "Extract and store facts from conversations automatically"
+    },
+    "ownerOnly": {
+      "label": "Owner Only",
+      "help": "Only capture from owner conversations (security)"
+    },
+    "recall.topK": {
+      "label": "Top K Results",
+      "placeholder": "5",
+      "advanced": true
+    },
+    "recall.minScore": {
+      "label": "Min Score",
+      "placeholder": "0.55",
+      "advanced": true
+    },
+    "capture.maxChars": {
+      "label": "Capture Max Chars",
+      "placeholder": "3000",
+      "advanced": true
+    },
+    "writeGate.autoThreshold": {
+      "label": "Write Gate Threshold",
+      "placeholder": "0.50",
+      "help": "Quality score threshold for auto-storing facts",
+      "advanced": true
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "atomStorePath": { "type": "string" },
+      "chromadb": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "url": { "type": "string" },
+          "collection": { "type": "string" }
+        }
+      },
+      "ollama": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "baseUrl": { "type": "string" },
+          "embeddingModel": { "type": "string" },
+          "extractionModel": { "type": "string" }
+        }
+      },
+      "autoRecall": { "type": "boolean" },
+      "autoCapture": { "type": "boolean" },
+      "ownerOnly": { "type": "boolean" },
+      "recall": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "topK": { "type": "number", "minimum": 1, "maximum": 20 },
+          "minScore": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "capture": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "maxChars": { "type": "number", "minimum": 100, "maximum": 10000 },
+          "maxItems": { "type": "number", "minimum": 1, "maximum": 10 }
+        }
+      },
+      "writeGate": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "autoThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+          "dedupScore": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      }
+    }
+  }
+}

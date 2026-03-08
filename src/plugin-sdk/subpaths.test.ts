@@ -29,6 +29,7 @@ const bundledExtensionSubpathLoaders = [
   { id: "mattermost", load: () => import("openclaw/plugin-sdk/mattermost") },
   { id: "memory-core", load: () => import("openclaw/plugin-sdk/memory-core") },
   { id: "memory-lancedb", load: () => import("openclaw/plugin-sdk/memory-lancedb") },
+  { id: "atomic-memory", load: () => import("openclaw/plugin-sdk/atomic-memory") },
   {
     id: "minimax-portal-auth",
     load: () => import("openclaw/plugin-sdk/minimax-portal-auth"),

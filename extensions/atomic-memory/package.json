@@ -1,0 +1,16 @@
+{
+  "name": "@openclaw/atomic-memory",
+  "version": "2026.3.8",
+  "private": true,
+  "description": "OpenClaw structured knowledge memory with confidence tiers (人事時地物)",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "0.34.48",
+    "chromadb": "^1.9.2"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
