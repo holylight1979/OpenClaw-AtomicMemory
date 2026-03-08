@@ -1,0 +1,208 @@
+/**
+ * Atomic Memory Plugin — Configuration schema + defaults.
+ *
+ * Uses manual parse/validate pattern matching memory-lancedb's configSchema.
+ */
+
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+// ============================================================================
+// Config type
+// ============================================================================
+
+export type AtomicMemoryConfig = {
+  atomStorePath: string;
+  chromadb: {
+    url: string;
+    collection: string;
+  };
+  ollama: {
+    baseUrl: string;
+    embeddingModel: string;
+    extractionModel: string;
+  };
+  autoRecall: boolean;
+  autoCapture: boolean;
+  ownerOnly: boolean;
+  recall: {
+    topK: number;
+    minScore: number;
+  };
+  capture: {
+    maxChars: number;
+    maxItems: number;
+  };
+  writeGate: {
+    autoThreshold: number;
+    dedupScore: number;
+  };
+};
+
+// ============================================================================
+// Defaults
+// ============================================================================
+
+const DEFAULT_ATOM_STORE_PATH = join(homedir(), ".openclaw", "memory", "atoms");
+const DEFAULT_CHROMADB_URL = "http://localhost:8000";
+const DEFAULT_COLLECTION = "openclaw_atoms";
+const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
+const DEFAULT_EMBEDDING_MODEL = "qwen3-embedding";
+const DEFAULT_EXTRACTION_MODEL = "qwen3:1.7b";
+
+// ============================================================================
+// Config schema (parse + uiHints)
+// ============================================================================
+
+function assertAllowedKeys(value: Record<string, unknown>, allowed: string[], label: string) {
+  const unknown = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (unknown.length > 0) {
+    throw new Error(`${label} has unknown keys: ${unknown.join(", ")}`);
+  }
+}
+
+function numOrDefault(value: unknown, def: number, min?: number, max?: number): number {
+  if (typeof value !== "number") return def;
+  const v = value;
+  if (min !== undefined && v < min) return def;
+  if (max !== undefined && v > max) return def;
+  return v;
+}
+
+function boolOrDefault(value: unknown, def: boolean): boolean {
+  return typeof value === "boolean" ? value : def;
+}
+
+function strOrDefault(value: unknown, def: string): string {
+  return typeof value === "string" && value.length > 0 ? value : def;
+}
+
+export const atomicMemoryConfigSchema = {
+  parse(value: unknown): AtomicMemoryConfig {
+    const cfg = (value && typeof value === "object" && !Array.isArray(value)
+      ? value
+      : {}) as Record<string, unknown>;
+
+    assertAllowedKeys(
+      cfg,
+      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "recall", "capture", "writeGate"],
+      "atomic-memory config",
+    );
+
+    // chromadb sub-config
+    const chromadbRaw = (cfg.chromadb ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(chromadbRaw, ["url", "collection"], "chromadb config");
+
+    // ollama sub-config
+    const ollamaRaw = (cfg.ollama ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(ollamaRaw, ["baseUrl", "embeddingModel", "extractionModel"], "ollama config");
+
+    // recall sub-config
+    const recallRaw = (cfg.recall ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(recallRaw, ["topK", "minScore"], "recall config");
+
+    // capture sub-config
+    const captureRaw = (cfg.capture ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(captureRaw, ["maxChars", "maxItems"], "capture config");
+
+    // writeGate sub-config
+    const writeGateRaw = (cfg.writeGate ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(writeGateRaw, ["autoThreshold", "dedupScore"], "writeGate config");
+
+    return {
+      atomStorePath: strOrDefault(cfg.atomStorePath, DEFAULT_ATOM_STORE_PATH),
+      chromadb: {
+        url: strOrDefault(chromadbRaw.url, DEFAULT_CHROMADB_URL),
+        collection: strOrDefault(chromadbRaw.collection, DEFAULT_COLLECTION),
+      },
+      ollama: {
+        baseUrl: strOrDefault(ollamaRaw.baseUrl, DEFAULT_OLLAMA_URL),
+        embeddingModel: strOrDefault(ollamaRaw.embeddingModel, DEFAULT_EMBEDDING_MODEL),
+        extractionModel: strOrDefault(ollamaRaw.extractionModel, DEFAULT_EXTRACTION_MODEL),
+      },
+      autoRecall: boolOrDefault(cfg.autoRecall, true),
+      autoCapture: boolOrDefault(cfg.autoCapture, true),
+      ownerOnly: boolOrDefault(cfg.ownerOnly, true),
+      recall: {
+        topK: numOrDefault(recallRaw.topK, 5, 1, 20),
+        minScore: numOrDefault(recallRaw.minScore, 0.55, 0, 1),
+      },
+      capture: {
+        maxChars: numOrDefault(captureRaw.maxChars, 3000, 100, 10000),
+        maxItems: numOrDefault(captureRaw.maxItems, 3, 1, 10),
+      },
+      writeGate: {
+        autoThreshold: numOrDefault(writeGateRaw.autoThreshold, 0.50, 0, 1),
+        dedupScore: numOrDefault(writeGateRaw.dedupScore, 0.80, 0, 1),
+      },
+    };
+  },
+
+  uiHints: {
+    atomStorePath: {
+      label: "Atom Store Path",
+      placeholder: "~/.openclaw/memory/atoms",
+      help: "Directory for atom markdown files",
+      advanced: true,
+    },
+    "chromadb.url": {
+      label: "ChromaDB URL",
+      placeholder: DEFAULT_CHROMADB_URL,
+      help: "ChromaDB server URL for vector indexing",
+      advanced: true,
+    },
+    "chromadb.collection": {
+      label: "ChromaDB Collection",
+      placeholder: DEFAULT_COLLECTION,
+      advanced: true,
+    },
+    "ollama.baseUrl": {
+      label: "Ollama URL",
+      placeholder: DEFAULT_OLLAMA_URL,
+      advanced: true,
+    },
+    "ollama.embeddingModel": {
+      label: "Embedding Model",
+      placeholder: DEFAULT_EMBEDDING_MODEL,
+      help: "Ollama model for text embeddings",
+    },
+    "ollama.extractionModel": {
+      label: "Extraction Model",
+      placeholder: DEFAULT_EXTRACTION_MODEL,
+      help: "Ollama model for knowledge extraction",
+    },
+    autoRecall: {
+      label: "Auto-Recall",
+      help: "Inject relevant atom memories into agent context automatically",
+    },
+    autoCapture: {
+      label: "Auto-Capture",
+      help: "Extract and store facts from conversations automatically",
+    },
+    ownerOnly: {
+      label: "Owner Only",
+      help: "Only capture from owner conversations (security)",
+    },
+    "recall.topK": {
+      label: "Top K Results",
+      placeholder: "5",
+      advanced: true,
+    },
+    "recall.minScore": {
+      label: "Min Score",
+      placeholder: "0.55",
+      advanced: true,
+    },
+    "capture.maxChars": {
+      label: "Capture Max Chars",
+      placeholder: "3000",
+      advanced: true,
+    },
+    "writeGate.autoThreshold": {
+      label: "Write Gate Threshold",
+      placeholder: "0.50",
+      help: "Quality score threshold for auto-storing facts",
+      advanced: true,
+    },
+  },
+};

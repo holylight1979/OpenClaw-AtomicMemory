@@ -155,6 +155,11 @@ const pluginSdkScopedAliasEntries = [
     distFile: "memory-lancedb.js",
   },
   {
+    subpath: "atomic-memory",
+    srcFile: "atomic-memory.ts",
+    distFile: "atomic-memory.js",
+  },
+  {
     subpath: "minimax-portal-auth",
     srcFile: "minimax-portal-auth.ts",
     distFile: "minimax-portal-auth.js",
