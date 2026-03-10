@@ -395,7 +395,9 @@ async function runWarmUp(params: {
         reject(new Error(`warm-up failed: ${errMsg}`));
       } else if (event.type === "error") {
         cleanup();
-        reject(new Error(`warm-up error: ${event.message} (code=${event.code})`));
+        const errMsg = event.error?.message || event.message || "Unknown error";
+        const errCode = event.error?.code || event.code || "unknown";
+        reject(new Error(`warm-up error: ${errMsg} (code=${errCode})`));
       }
     });
 
@@ -686,7 +688,9 @@ export function createOpenAIWebSocketStreamFn(
             reject(new Error(`OpenAI WebSocket response failed: ${errMsg}`));
           } else if (event.type === "error") {
             cleanup();
-            reject(new Error(`OpenAI WebSocket error: ${event.message} (code=${event.code})`));
+            const errMsg = event.error?.message || event.message || "Unknown error";
+            const errCode = event.error?.code || event.code || "unknown";
+            reject(new Error(`OpenAI WebSocket error: ${errMsg} (code=${errCode})`));
           } else if (event.type === "response.output_text.delta") {
             // Stream partial text updates for responsive UI
             const partialMsg: AssistantMessage = buildAssistantMessageWithZeroUsage({

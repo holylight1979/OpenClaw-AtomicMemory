@@ -483,6 +483,15 @@ export async function dispatchReplyFromConfig(params: {
       if (shouldSuppressReasoningPayload(reply)) {
         continue;
       }
+      // Suppress error payloads in group chats — internal errors (API failures,
+      // context overflow, etc.) should not be visible to all group members.
+      // Errors are still logged server-side via `openclaw logs`.
+      if (isGroup && reply.isError) {
+        logVerbose(
+          `dispatch-from-config: suppressing error payload in group context: ${reply.text?.slice(0, 120) ?? "(no text)"}`,
+        );
+        continue;
+      }
       const ttsReply = await maybeApplyTtsToPayload({
         payload: reply,
         cfg,

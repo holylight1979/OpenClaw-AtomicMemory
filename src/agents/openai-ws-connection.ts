@@ -152,9 +152,12 @@ export interface RateLimitUpdatedEvent {
 
 export interface ErrorEvent {
   type: "error";
-  code: string;
-  message: string;
+  code?: string;
+  message?: string;
   param?: string;
+  /** Codex API nests error details inside an `error` object. */
+  error?: { type?: string; code?: string; message?: string; param?: string };
+  sequence_number?: number;
 }
 
 export type OpenAIWebSocketEvent =
