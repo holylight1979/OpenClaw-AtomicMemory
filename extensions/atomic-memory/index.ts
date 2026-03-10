@@ -48,6 +48,11 @@ const FORGET_CLEANUP_PATTERNS = [
  * Returns the target keyword to search for deletion.
  */
 function detectForgetIntent(text: string): { isForget: boolean; target: string } {
+  // Skip confirmation-style responses (user confirming a previous forget action)
+  if (/^(確認|好|對|是|ok|yes|sure|confirm|y|刪|刪吧|刪掉|確認刪除)\s*[。！?.!]?\s*$/i.test(text.trim())) {
+    return { isForget: false, target: "" };
+  }
+
   const matched = FORGET_PATTERNS.some((p) => p.test(text));
   if (!matched) return { isForget: false, target: "" };
 
@@ -285,6 +290,13 @@ const atomicMemoryPlugin = {
     );
     const promotion = new PromotionEngine(store);
 
+    // Pending forget state — tracks forget candidates awaiting user confirmation
+    let pendingForget: {
+      target: string;
+      candidates: Array<{ category: string; id: string; knowledge: string }>;
+      timestamp: number;
+    } | null = null;
+
     api.logger.info(`atomic-memory: registered (store: ${resolvedStorePath}, lazy init)`);
 
     // ========================================================================
@@ -314,49 +326,119 @@ const atomicMemoryPlugin = {
             !l.startsWith("{") &&
             !l.startsWith("}") &&
             !l.match(/^"[a-z_]+":/) &&
-            l.length >= 3 && l.length <= 300
+            l.length >= 1 && l.length <= 300
           );
           let queryForRecall = userLines.length > 0
             ? userLines[userLines.length - 1]
             : event.prompt.slice(0, 200);
           // Strip @mentions (e.g. @光AI.Jr, @BotName) — they dilute embedding quality
           queryForRecall = queryForRecall.replace(/@\S+\s*/g, "").trim();
-          if (queryForRecall.length < 3) queryForRecall = event.prompt.slice(0, 200);
+          // Strip timestamp prefix (e.g. [Tue 2026-03-10 01:27 GMT+8]) added by OpenClaw channels
+          queryForRecall = queryForRecall.replace(/^\[.*?\]\s*/, "").trim();
+          if (queryForRecall.length < 1) queryForRecall = event.prompt.slice(0, 200);
 
           api.logger.info(`atomic-memory: recall query (${queryForRecall.length} chars): "${queryForRecall.slice(0, 120)}"`);
 
           // ----------------------------------------------------------------
-          // 方案 A: Forget intent detection — auto-delete without LLM tool call
+          // 方案 A: Forget flow — hook manages entire lifecycle
+          // Step 1: Detect forget intent → find candidates → store pending → ask user
+          // Step 2: Detect confirmation → execute deletion from pending state
           // ----------------------------------------------------------------
+
+          // Check for pending forget confirmation first (expires after 5 min)
+          if (pendingForget && Date.now() - pendingForget.timestamp < 5 * 60 * 1000) {
+            const confirmPattern = /^(確認|好|對|是|ok|yes|sure|confirm|y|刪|刪吧|刪掉|確認刪除|1|２|2|３|3)\s*[。！?.!]?\s*$/i;
+            const numberPattern = /^(\d+)\s*$/;
+            const msg = queryForRecall.trim();
+            if (confirmPattern.test(msg) || numberPattern.test(msg)) {
+              // User confirmed — execute deletion
+              const numMatch = msg.match(/^(\d+)\s*$/);
+              const idx = numMatch ? parseInt(numMatch[1], 10) - 1 : 0; // default to first candidate
+              const candidate = pendingForget.candidates[idx] || pendingForget.candidates[0];
+              if (candidate) {
+                try {
+                  const ref = `${candidate.category}/${candidate.id}`;
+                  await store.moveToDistant(candidate.category as any, candidate.id);
+                  await vectors.deleteAtom(ref);
+                  await store.updateMemoryIndex();
+                  api.logger.info(`atomic-memory: CONFIRMED-FORGOT ${ref} — "${candidate.knowledge.slice(0, 60)}"`);
+                  const forgetTarget = pendingForget.target;
+                  pendingForget = null;
+                  return {
+                    prependContext: `<atomic-memory-action action="forgot" ref="${ref}">\nI already deleted the memory about "${forgetTarget}" (${ref}: ${candidate.knowledge.slice(0, 80)}). Confirm to the user that it has been forgotten. Do NOT store this deletion as a new memory.\n</atomic-memory-action>`,
+                  };
+                } catch (err) {
+                  api.logger.warn(`atomic-memory: confirmed forget failed: ${String(err)}`);
+                  pendingForget = null;
+                }
+              }
+            }
+            // If message is not a confirmation, clear pending state and proceed normally
+            if (!/確認|刪|delete|forget|忘/i.test(msg)) {
+              api.logger.info(`atomic-memory: pending forget expired (non-confirmation message)`);
+              pendingForget = null;
+            }
+          } else if (pendingForget) {
+            api.logger.info(`atomic-memory: pending forget expired (timeout)`);
+            pendingForget = null;
+          }
+
+          // Detect new forget intent
           const forgetResult = detectForgetIntent(queryForRecall);
           if (forgetResult.isForget && forgetResult.target.length >= 2) {
             api.logger.info(`atomic-memory: FORGET intent detected, target="${forgetResult.target}"`);
             try {
-              const forgetResults = await recall.search(forgetResult.target, { topK: 5, minScore: 0.3 });
-              if (forgetResults.length > 0) {
-                // Auto-delete: single match or clear winner
-                const clearWinner =
-                  forgetResults.length === 1 ||
-                  (forgetResults.length >= 2 && forgetResults[0].score - forgetResults[1].score > 0.10);
-                if (clearWinner) {
-                  const target = forgetResults[0];
-                  const ref = `${target.atom.category}/${target.atom.id}`;
-                  await store.moveToDistant(target.atom.category, target.atom.id);
-                  await vectors.deleteAtom(ref);
-                  await store.updateMemoryIndex();
-                  api.logger.info(`atomic-memory: AUTO-FORGOT ${ref} — "${target.atom.knowledge.slice(0, 60)}"`);
-                  return {
-                    prependContext: `<atomic-memory-action action="forgot" ref="${ref}">\nI already deleted the memory about "${forgetResult.target}" (${ref}: ${target.atom.knowledge.slice(0, 80)}). Confirm to the user that it has been forgotten. Do NOT store this deletion as a new memory.\n</atomic-memory-action>`,
-                  };
+              // Phase 1: Vector + keyword search via recall engine
+              const rawResults = await recall.search(forgetResult.target, { topK: 10, minScore: 0.2 });
+
+              // Phase 2: Filter results — prefer those whose knowledge/id contains the target
+              const targetLower = forgetResult.target.toLowerCase();
+              let forgetCandidates = rawResults.filter((r: any) => {
+                const k = ((r.atom?.knowledge || r.text) || "").toLowerCase();
+                const id = (r.atom?.id || "").toLowerCase();
+                return k.includes(targetLower) || id.includes(targetLower);
+              });
+              if (forgetCandidates.length > 0) {
+                api.logger.info(`atomic-memory: forget filtered recall to ${forgetCandidates.length} target-matching results`);
+              }
+
+              // Phase 3: If no recall results match target text, scan atom knowledge on disk
+              if (forgetCandidates.length === 0) {
+                api.logger.info(`atomic-memory: forget recall had no target match, trying knowledge text scan`);
+                const allAtoms = await store.list();
+                const textMatches = allAtoms.filter((a: any) => {
+                  const knowledgeLower = (a.knowledge || "").toLowerCase();
+                  const idLower = (a.id || "").toLowerCase();
+                  return knowledgeLower.includes(targetLower) || idLower.includes(targetLower);
+                });
+                if (textMatches.length > 0) {
+                  forgetCandidates = textMatches.map((a: any) => ({
+                    atom: a,
+                    score: 0.50,
+                    text: a.knowledge || a.id,
+                    matchedChunks: [],
+                  }));
+                  api.logger.info(`atomic-memory: forget text scan found ${textMatches.length} matches`);
                 }
-                // Multiple candidates — inject them so LLM can pick
-                const candidateList = forgetResults
-                  .slice(0, 3)
-                  .map((r) => `- ${r.atom.category}/${r.atom.id}: ${r.atom.knowledge.slice(0, 60)} (score: ${(r.score * 100).toFixed(0)}%)`)
+              }
+
+              if (forgetCandidates.length > 0) {
+                // Store pending forget state for confirmation
+                pendingForget = {
+                  target: forgetResult.target,
+                  candidates: forgetCandidates.slice(0, 5).map((r: any) => ({
+                    category: r.atom.category,
+                    id: r.atom.id,
+                    knowledge: r.atom.knowledge || "",
+                  })),
+                  timestamp: Date.now(),
+                };
+                const candidateList = pendingForget.candidates
+                  .map((c, i) => `${i + 1}. ${c.category}/${c.id}: ${c.knowledge.slice(0, 80)}`)
                   .join("\n");
-                api.logger.info(`atomic-memory: forget has ${forgetResults.length} candidates, injecting for LLM choice`);
+                api.logger.info(`atomic-memory: forget stored ${pendingForget.candidates.length} pending candidates, awaiting confirmation`);
                 return {
-                  prependContext: `<atomic-memory-action action="forget-candidates">\nThe user wants to forget something about "${forgetResult.target}". Found ${forgetResults.length} matching memories:\n${candidateList}\n\nUse the atom_forget tool with the correct atomRef to delete the right one. Do NOT just say "ok" — you MUST call atom_forget.\n</atomic-memory-action>`,
+                  prependContext: `<atomic-memory-action action="forget-confirm">\nThe user wants to forget something about "${forgetResult.target}". Found ${pendingForget.candidates.length} matching memories:\n${candidateList}\n\nAsk the user to confirm which one to delete (by number or just "確認" for the first one). The system will handle the actual deletion — you do NOT need to call any tools.\n</atomic-memory-action>`,
                 };
               }
               api.logger.info(`atomic-memory: forget target "${forgetResult.target}" matched 0 atoms`);
@@ -364,7 +446,7 @@ const atomicMemoryPlugin = {
                 prependContext: `<atomic-memory-action action="forget-not-found">\nThe user asked to forget "${forgetResult.target}" but no matching memories were found. Let them know.\n</atomic-memory-action>`,
               };
             } catch (err) {
-              api.logger.warn(`atomic-memory: forget auto-delete failed: ${String(err)}`);
+              api.logger.warn(`atomic-memory: forget search failed: ${String(err)}`);
             }
           }
 
