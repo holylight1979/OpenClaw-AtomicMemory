@@ -5,7 +5,7 @@
  *   ~/.openclaw/memory/atoms/{category}/{id}.md
  */
 
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseAtom } from "./atom-parser.js";
@@ -164,7 +164,7 @@ export class AtomStore {
     const filePath = this.atomPath(category, id);
     if (!existsSync(filePath)) return false;
 
-    rmSync(filePath);
+    unlinkSync(filePath);
     return true;
   }
 
@@ -284,7 +284,7 @@ export class AtomStore {
     if (!existsSync(testDir)) return 0;
     const files = readdirSync(testDir).filter((f) => f.endsWith(".md"));
     for (const f of files) {
-      rmSync(join(testDir, f));
+      unlinkSync(join(testDir, f));
     }
     return files.length;
   }

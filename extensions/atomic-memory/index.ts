@@ -327,6 +327,7 @@ const atomicMemoryPlugin = {
       factCount: 0,
       lastTestTurn: 0,
       currentTurn: 0,
+      askedCleanup: false,
     };
 
     api.logger.info(`atomic-memory: registered (store: ${resolvedStorePath}, lazy init)`);
@@ -487,24 +488,38 @@ const atomicMemoryPlugin = {
           // ----------------------------------------------------------------
           testSession.currentTurn++;
           if (testSession.active) {
-            const turnsSinceLastTest = testSession.currentTurn - testSession.lastTestTurn;
-            const hasTestIntent = TEST_CONTENT_PATTERNS.some((p) => p.test(queryForRecall));
-            if (!hasTestIntent && turnsSinceLastTest >= 2) {
-              const testCount = store.countTestAtoms();
-              if (testCount > 0) {
-                api.logger.info(`atomic-memory: test session may be over (${turnsSinceLastTest} turns since last test, ${testCount} test atoms)`);
-                // Check for cleanup confirmation
-                const cleanupConfirm = /^(是|好|對|ok|yes|清理|清除|結束測試|clean)\s*[。！?.!]?\s*$/i;
-                if (cleanupConfirm.test(queryForRecall.trim())) {
-                  const cleared = store.clearTestAtoms();
-                  testSession = { active: false, factCount: 0, lastTestTurn: 0, currentTurn: testSession.currentTurn };
-                  api.logger.info(`atomic-memory: test session ended, cleared ${cleared} test atoms`);
+            const cleanupConfirm = /(是|好|對|ok|yes|清理|清除|清掉|結束測試|結束了|測試完|clean)/i;
+
+            // If we already asked about cleanup: auto-clean if user confirms OR sends non-test message
+            if (testSession.askedCleanup) {
+              const hasTestIntent = TEST_CONTENT_PATTERNS.some((p) => p.test(queryForRecall));
+              if (!hasTestIntent) {
+                // User moved on or confirmed — auto-clean
+                const cleared = store.clearTestAtoms();
+                const wasConfirm = cleanupConfirm.test(queryForRecall.trim());
+                testSession = { active: false, factCount: 0, lastTestTurn: 0, currentTurn: testSession.currentTurn, askedCleanup: false };
+                api.logger.info(`atomic-memory: test session ended (${wasConfirm ? "confirmed" : "auto"}, cleared ${cleared} test atoms)`);
+                if (wasConfirm) {
                   return {
                     prependContext: `<atomic-memory-action action="test-cleanup-done">\nCleared ${cleared} test memories. Confirm to the user that testing is complete and test data has been cleaned up.\n</atomic-memory-action>`,
                   };
                 }
-                // Ask once, then deactivate to avoid blocking normal recall repeatedly
-                testSession.active = false;
+                // If not explicit confirm, silently clean and continue with normal recall
+              } else {
+                // User is still testing — reset askedCleanup, continue
+                testSession.askedCleanup = false;
+              }
+            }
+
+            // Check if we should ask about ending test session
+            const turnsSinceLastTest = testSession.currentTurn - testSession.lastTestTurn;
+            const hasTestIntent = TEST_CONTENT_PATTERNS.some((p) => p.test(queryForRecall));
+            if (!hasTestIntent && turnsSinceLastTest >= 1 && !testSession.askedCleanup) {
+              const testCount = store.countTestAtoms();
+              if (testCount > 0) {
+                api.logger.info(`atomic-memory: test session may be over (${turnsSinceLastTest} turns since last test, ${testCount} test atoms)`);
+                // Ask once, then wait for confirmation on next turn
+                testSession.askedCleanup = true;
                 // Don't return — fall through to normal recall, but append test check context
                 // (handled below via testCheckContext)
               }
@@ -588,7 +603,7 @@ const atomicMemoryPlugin = {
                 await store.storeTest(fact);
                 testSession.factCount++;
                 testSession.lastTestTurn = testSession.currentTurn;
-                if (testSession.factCount >= 2) testSession.active = true;
+                if (testSession.factCount >= 1) testSession.active = true;
                 api.logger.info(`atomic-memory: [${i+1}/${facts.length}] test fact → _test/: "${fact.text.slice(0, 50)}"`);
               } catch (err) {
                 api.logger.warn(`atomic-memory: test store failed: ${String(err)}`);
@@ -806,6 +821,20 @@ const atomicMemoryPlugin = {
             category: AtomCategory;
             confidence?: Confidence;
           };
+
+          // Test data detection — redirect to _test/ area
+          if (isTestFact(text)) {
+            const testId = await store.storeTest({ text, category, confidence });
+            testSession.factCount++;
+            testSession.lastTestTurn = testSession.currentTurn;
+            if (testSession.factCount >= 1) testSession.active = true;
+            return {
+              content: [
+                { type: "text", text: `Test fact stored in _test/ area: ${testId}` },
+              ],
+              details: { action: "test", ref: `_test/${testId}` },
+            };
+          }
 
           // Dedup check
           const dedup = await capture.checkDuplicate(text);
