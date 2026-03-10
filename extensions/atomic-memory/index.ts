@@ -175,10 +175,34 @@ function formatAtomicMemoriesContext(atoms: RecalledAtom[], channelId?: string):
  * Parse bullet-point lines (`- ...`) from markdown text into ExtractedFact[].
  * Skips headers, blank lines, metadata lines (bold prefixed like `**Name:**`).
  */
+const TEST_SECTION_PATTERN = /^(testing|test|debug|測試|偵錯|除錯)$/i;
+
+const TEST_CONTENT_PATTERNS = [
+  /測試(碼|驗證碼|資料|用的)/,
+  /test\s*(code|data|token|key|value)/i,
+  /驗證碼/,
+  /^XTEST|^ABC\d{3}|MEMORY-OK/i,
+];
+
+function isTestFact(text: string): boolean {
+  return TEST_CONTENT_PATTERNS.some((p) => p.test(text));
+}
+
 function parseBulletFacts(content: string): ExtractedFact[] {
   const facts: ExtractedFact[] = [];
+  let inTestSection = false;
+
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
+
+    // Track section headers — skip bullets under test/debug sections
+    const headerMatch = trimmed.match(/^#{1,3}\s+(.+)/);
+    if (headerMatch) {
+      inTestSection = TEST_SECTION_PATTERN.test(headerMatch[1].trim());
+      continue;
+    }
+    if (inTestSection) continue;
+
     // Only process bullet lines
     if (!trimmed.startsWith("- ")) continue;
     let text = trimmed.slice(2).trim();
@@ -296,6 +320,14 @@ const atomicMemoryPlugin = {
       candidates: Array<{ category: string; id: string; knowledge: string }>;
       timestamp: number;
     } | null = null;
+
+    // Test session tracking — detects when user is testing memory and offers cleanup
+    let testSession = {
+      active: false,
+      factCount: 0,
+      lastTestTurn: 0,
+      currentTurn: 0,
+    };
 
     api.logger.info(`atomic-memory: registered (store: ${resolvedStorePath}, lazy init)`);
 
@@ -451,6 +483,35 @@ const atomicMemoryPlugin = {
           }
 
           // ----------------------------------------------------------------
+          // Test session: detect end-of-testing and offer cleanup
+          // ----------------------------------------------------------------
+          testSession.currentTurn++;
+          if (testSession.active) {
+            const turnsSinceLastTest = testSession.currentTurn - testSession.lastTestTurn;
+            const hasTestIntent = TEST_CONTENT_PATTERNS.some((p) => p.test(queryForRecall));
+            if (!hasTestIntent && turnsSinceLastTest >= 2) {
+              const testCount = store.countTestAtoms();
+              if (testCount > 0) {
+                api.logger.info(`atomic-memory: test session may be over (${turnsSinceLastTest} turns since last test, ${testCount} test atoms)`);
+                // Check for cleanup confirmation
+                const cleanupConfirm = /^(是|好|對|ok|yes|清理|清除|結束測試|clean)\s*[。！?.!]?\s*$/i;
+                if (cleanupConfirm.test(queryForRecall.trim())) {
+                  const cleared = store.clearTestAtoms();
+                  testSession = { active: false, factCount: 0, lastTestTurn: 0, currentTurn: testSession.currentTurn };
+                  api.logger.info(`atomic-memory: test session ended, cleared ${cleared} test atoms`);
+                  return {
+                    prependContext: `<atomic-memory-action action="test-cleanup-done">\nCleared ${cleared} test memories. Confirm to the user that testing is complete and test data has been cleaned up.\n</atomic-memory-action>`,
+                  };
+                }
+                // Ask once, then deactivate to avoid blocking normal recall repeatedly
+                testSession.active = false;
+                // Don't return — fall through to normal recall, but append test check context
+                // (handled below via testCheckContext)
+              }
+            }
+          }
+
+          // ----------------------------------------------------------------
           // Normal recall flow
           // ----------------------------------------------------------------
           const atoms = await recall.search(queryForRecall, {
@@ -458,15 +519,24 @@ const atomicMemoryPlugin = {
             minScore: cfg.recall.minScore,
           });
 
+          // Check if we need to append a test-session cleanup suggestion
+          const testCount = store.countTestAtoms();
+          const testCheckSuffix = testCount > 0 && !testSession.active
+            ? `\n\n<atomic-memory-action action="test-session-check">\nNote: There are ${testCount} test memory items pending cleanup. When appropriate, naturally ask if the memory test is done and whether to clean up. Keep it brief.\n</atomic-memory-action>`
+            : "";
+
           if (atoms.length === 0) {
             api.logger.info?.(`atomic-memory: recall returned 0 atoms for channel ${channelId}`);
+            if (testCheckSuffix) {
+              return { prependContext: testCheckSuffix.trim() };
+            }
             return;
           }
 
           api.logger.info?.(`atomic-memory: injecting ${atoms.length} atoms into context for channel ${channelId}`);
 
           return {
-            prependContext: formatAtomicMemoriesContext(atoms, channelId),
+            prependContext: formatAtomicMemoriesContext(atoms, channelId) + testCheckSuffix,
           };
         } catch (err) {
           api.logger.warn(`atomic-memory: recall failed: ${String(err)}`);
@@ -507,17 +577,23 @@ const atomicMemoryPlugin = {
           let skippedGate = 0;
           let skippedDedup = 0;
           let superseded = 0;
+          let skippedTest = 0;
 
           for (let i = 0; i < facts.length; i++) {
             const fact = facts[i];
-            // Skip pure negation facts — they carry no positive knowledge
-            // e.g. "使用者沒有養貓", "User doesn't have a cat"
-            const isPureNegation =
-              NEGATION_KEYWORDS_ZH.some((kw) => fact.text.includes(kw)) ||
-              NEGATION_KEYWORDS_EN.some((kw) => fact.text.toLowerCase().includes(kw));
-            if (isPureNegation) {
-              api.logger.info(`atomic-memory: [${i+1}/${facts.length}] skipped negation fact: "${fact.text.slice(0, 50)}"`);
-              skippedGate++;
+
+            // Test data detection — redirect to _test/ area instead of real atoms
+            if (isTestFact(fact.text)) {
+              try {
+                await store.storeTest(fact);
+                testSession.factCount++;
+                testSession.lastTestTurn = testSession.currentTurn;
+                if (testSession.factCount >= 2) testSession.active = true;
+                api.logger.info(`atomic-memory: [${i+1}/${facts.length}] test fact → _test/: "${fact.text.slice(0, 50)}"`);
+              } catch (err) {
+                api.logger.warn(`atomic-memory: test store failed: ${String(err)}`);
+              }
+              skippedTest++;
               continue;
             }
 
@@ -584,7 +660,7 @@ const atomicMemoryPlugin = {
             stored++;
           }
 
-          api.logger.info(`atomic-memory: capture loop done — stored=${stored}, superseded=${superseded}, skippedGate=${skippedGate}, skippedDedup=${skippedDedup}, total=${facts.length}`);
+          api.logger.info(`atomic-memory: capture loop done — stored=${stored}, superseded=${superseded}, skippedGate=${skippedGate}, skippedDedup=${skippedDedup}, skippedTest=${skippedTest}, total=${facts.length}`);
           if (stored > 0 || superseded > 0) {
             api.logger.info(`atomic-memory: auto-captured ${stored} facts, superseded ${superseded} from channel ${channelId}`);
             await store.updateMemoryIndex();
