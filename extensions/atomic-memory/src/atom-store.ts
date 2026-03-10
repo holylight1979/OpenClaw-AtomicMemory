@@ -30,6 +30,11 @@ export class AtomStore {
     if (!existsSync(distantDir)) {
       mkdirSync(distantDir, { recursive: true });
     }
+    // Test atom area
+    const testDir = join(this.basePath, "_test");
+    if (!existsSync(testDir)) {
+      mkdirSync(testDir, { recursive: true });
+    }
   }
 
   /** Resolve path for an atom file. */
@@ -254,6 +259,42 @@ export class AtomStore {
   getBasePath(): string {
     return this.basePath;
   }
+
+  // ==========================================================================
+  // Test atom operations
+  // ==========================================================================
+
+  /** Store a fact in the _test/ area (isolated from real atoms). */
+  async storeTest(fact: { text: string; category: AtomCategory; confidence: Confidence }): Promise<string> {
+    const testDir = join(this.basePath, "_test");
+    if (!existsSync(testDir)) {
+      mkdirSync(testDir, { recursive: true });
+    }
+    const id = `test-${slugify(fact.text)}`;
+    const filePath = join(testDir, `${id}.md`);
+    const today = new Date().toISOString().slice(0, 10);
+    const content = `# ${fact.text.slice(0, 60)}\n\n- Scope: test\n- Category: ${fact.category}\n- Created: ${today}\n\n## 知識\n\n- ${fact.text}\n`;
+    writeFileSync(filePath, content, "utf-8");
+    return id;
+  }
+
+  /** Clear all test atoms. Returns the number of files removed. */
+  clearTestAtoms(): number {
+    const testDir = join(this.basePath, "_test");
+    if (!existsSync(testDir)) return 0;
+    const files = readdirSync(testDir).filter((f) => f.endsWith(".md"));
+    for (const f of files) {
+      rmSync(join(testDir, f));
+    }
+    return files.length;
+  }
+
+  /** Count test atoms. */
+  countTestAtoms(): number {
+    const testDir = join(this.basePath, "_test");
+    if (!existsSync(testDir)) return 0;
+    return readdirSync(testDir).filter((f) => f.endsWith(".md")).length;
+  }
 }
 
 // ============================================================================
@@ -275,34 +316,67 @@ function slugify(text: string): string {
 }
 
 /**
+ * Common filler words that have no recall value as triggers.
+ */
+const CJK_FILLERS = new Set([
+  "使用者", "要求", "記住", "提供", "更新", "資訊", "可以", "應該",
+  "已經", "需要", "目前", "喜歡", "討厭", "偏好", "認為", "覺得",
+  "知道", "不是", "沒有", "表示", "補充", "確認", "建議", "最喜歡",
+  "今天", "最新", "簡述", "更完整", "更新資訊", "再次確認",
+]);
+
+/**
  * Extract potential trigger keywords from a fact text.
- * Returns proper nouns, names, and key terms.
+ * Uses entity-aware extraction: looks after structural markers (叫/住在/是)
+ * for the actual subject/object, excludes filler words.
  */
 function extractTriggers(text: string): string[] {
   const triggers: string[] = [];
+  const addTrigger = (t: string) => {
+    const trimmed = t.trim();
+    if (trimmed.length >= 2 && !CJK_FILLERS.has(trimmed) && !triggers.includes(trimmed)) {
+      triggers.push(trimmed);
+    }
+  };
 
-  // CJK names / proper nouns (2-4 chars that look like names)
-  const cjkMatches = text.match(/[\u4e00-\u9fff]{2,4}/g);
-  if (cjkMatches) {
-    // Take the first few unique CJK terms as triggers
-    for (const m of cjkMatches.slice(0, 3)) {
-      if (!triggers.includes(m)) triggers.push(m);
+  // 1. Extract named entities after relationship markers
+  const entityPatterns = [
+    /(?:叫做?|名字(?:是|叫做?)?|名為|稱為)\s*([^\s，。、,！!]{1,8})/g,   // names
+    /(?:住在|位於|搬到)\s*([^\s，。、,！!]{2,8})/g,                       // places
+    /(?:養了|養的|有一隻|有一個)\s*([^\s，。、,！!]{1,6})/g,              // possessions
+  ];
+  for (const pattern of entityPatterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      addTrigger(match[1]);
     }
   }
 
-  // Capitalized English words (potential proper nouns)
-  const capMatches = text.match(/[A-Z][a-z]+(?:\s[A-Z][a-z]+)*/g);
-  if (capMatches) {
-    for (const m of capMatches.slice(0, 2)) {
-      if (!triggers.includes(m)) triggers.push(m);
+  // 2. English proper nouns and technical terms (TypeScript, ChromaDB, etc.)
+  const techMatches = text.match(/[A-Z][a-zA-Z]{2,}(?:#[a-zA-Z]+)*/g);
+  if (techMatches) {
+    for (const m of techMatches.slice(0, 3)) {
+      addTrigger(m);
     }
   }
 
-  // If no triggers extracted, use first meaningful segment
+  // 3. Fallback: CJK phrases not in filler set
+  if (triggers.length < 2) {
+    const cjkMatches = text.match(/[\u4e00-\u9fff]{2,6}/g);
+    if (cjkMatches) {
+      for (const m of cjkMatches) {
+        if (!CJK_FILLERS.has(m) && triggers.length < 5) {
+          addTrigger(m);
+        }
+      }
+    }
+  }
+
+  // 4. Last resort: first 20 meaningful chars
   if (triggers.length === 0) {
     const first = text.slice(0, 20).trim();
     if (first) triggers.push(first);
   }
 
-  return triggers;
+  return triggers.slice(0, 5);
 }
