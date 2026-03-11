@@ -5,6 +5,7 @@ import { createJiti } from "jiti";
 import type { OpenClawConfig } from "../config/config.js";
 import type { GatewayRequestHandler } from "../gateway/server-methods/types.js";
 import { openBoundaryFileSync } from "../infra/boundary-file-read.js";
+import { resolveOpenClawPackageRootSync } from "../infra/openclaw-root.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { resolveUserPath } from "../utils.js";
 import { clearPluginCommands } from "./commands.js";
@@ -111,6 +112,36 @@ const resolvePluginSdkAliasFile = (params: {
 const resolvePluginSdkAlias = (): string | null =>
   resolvePluginSdkAliasFile({ srcFile: "root-alias.cjs", distFile: "root-alias.cjs" });
 
+const cachedPluginSdkExportedSubpaths = new Map<string, string[]>();
+
+function listPluginSdkExportedSubpaths(params: { modulePath?: string } = {}): string[] {
+  const modulePath = params.modulePath ?? fileURLToPath(import.meta.url);
+  const packageRoot = resolveOpenClawPackageRootSync({
+    cwd: path.dirname(modulePath),
+  });
+  if (!packageRoot) {
+    return [];
+  }
+  const cached = cachedPluginSdkExportedSubpaths.get(packageRoot);
+  if (cached) {
+    return cached;
+  }
+  try {
+    const pkgRaw = fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8");
+    const pkg = JSON.parse(pkgRaw) as {
+      exports?: Record<string, unknown>;
+    };
+    const subpaths = Object.keys(pkg.exports ?? {})
+      .filter((key) => key.startsWith("./plugin-sdk/"))
+      .map((key) => key.slice("./plugin-sdk/".length))
+      .filter((subpath) => Boolean(subpath) && !subpath.includes("/"))
+      .toSorted();
+    cachedPluginSdkExportedSubpaths.set(packageRoot, subpaths);
+    return subpaths;
+  } catch {
+    return [];
+  }
+}
 const pluginSdkScopedAliasEntries = [
   { subpath: "core", srcFile: "core.ts", distFile: "core.js" },
   { subpath: "compat", srcFile: "compat.ts", distFile: "compat.js" },
@@ -208,13 +239,13 @@ const pluginSdkScopedAliasEntries = [
 
 const resolvePluginSdkScopedAliasMap = (): Record<string, string> => {
   const aliasMap: Record<string, string> = {};
-  for (const entry of pluginSdkScopedAliasEntries) {
+  for (const subpath of listPluginSdkExportedSubpaths()) {
     const resolved = resolvePluginSdkAliasFile({
-      srcFile: entry.srcFile,
-      distFile: entry.distFile,
+      srcFile: `${subpath}.ts`,
+      distFile: `${subpath}.js`,
     });
     if (resolved) {
-      aliasMap[`openclaw/plugin-sdk/${entry.subpath}`] = resolved;
+      aliasMap[`openclaw/plugin-sdk/${subpath}`] = resolved;
     }
   }
   return aliasMap;
@@ -222,6 +253,7 @@ const resolvePluginSdkScopedAliasMap = (): Record<string, string> => {
 
 export const __testing = {
   listPluginSdkAliasCandidates,
+  listPluginSdkExportedSubpaths,
   resolvePluginSdkAliasCandidateOrder,
   resolvePluginSdkAliasFile,
 };
