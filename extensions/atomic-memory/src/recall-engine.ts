@@ -17,6 +17,8 @@ export type RecallOptions = {
   senderId?: string;
   channel?: string;
   displayName?: string;
+  /** Memory isolation mode: shared (default), user-scoped, or owner-only. */
+  isolationMode?: "shared" | "user-scoped" | "owner-only";
 };
 
 export class RecallEngine {
@@ -47,26 +49,39 @@ export class RecallEngine {
     try {
       const queryVec = await this.ollama.embed(query);
       vectorResults = await this.vectors.search(queryVec, topK * 3, minScore * 0.5);
-    } catch {
+      console.log(`[atomic-memory:recall] vector search returned ${vectorResults.length} results (minScore=${minScore}, preFilter=${(minScore * 0.5).toFixed(2)})`);
+      for (const r of vectorResults.slice(0, 5)) {
+        console.log(`[atomic-memory:recall]   score=${r.score.toFixed(4)} atom=${r.atomName} text="${r.text.slice(0, 50)}"`);
+      }
+    } catch (err) {
+      console.log(`[atomic-memory:recall] vector search FAILED: ${err}`);
       // Vector search failed — fall back to keyword-only
     }
 
     // Phase 2: Keyword trigger matching
     const keywordHits = await this.keywordMatch(query);
+    console.log(`[atomic-memory:recall] keyword hits: ${keywordHits.size} (${[...keywordHits].join(", ")})`);
 
     // Phase 3: Keyword boost (V2.5)
     const boostedResults = this.applyKeywordBoost(vectorResults, keywordHits, query);
 
     // Phase 4: Ranked scoring
     const rankedResults = this.rankResults(boostedResults);
+    console.log(`[atomic-memory:recall] after ranking: ${rankedResults.length} results`);
+    for (const r of rankedResults.slice(0, 5)) {
+      console.log(`[atomic-memory:recall]   ranked=${r.score.toFixed(4)} atom=${r.atomName} text="${r.text.slice(0, 50)}"`);
+    }
 
     // Phase 5: Deduplicate by atom name (keep highest score per atom)
     const deduped = this.deduplicateByAtom(rankedResults);
 
     // Phase 6: Filter superseded atoms and apply minScore
-    const filtered = await this.filterSuperseded(
-      deduped.filter((r) => r.score >= minScore),
-    );
+    const beforeFilter = deduped.filter((r) => r.score >= minScore);
+    console.log(`[atomic-memory:recall] after minScore filter (>=${minScore}): ${beforeFilter.length} of ${deduped.length}`);
+    if (deduped.length > 0 && beforeFilter.length === 0) {
+      console.log(`[atomic-memory:recall] ALL filtered out! Top deduped scores: ${deduped.slice(0, 3).map(r => `${r.score.toFixed(4)}(${r.atomName})`).join(", ")}`);
+    }
+    const filtered = await this.filterSuperseded(beforeFilter);
 
     // Phase 7: Load full atoms and update metadata
     const recalled: RecalledAtom[] = [];
@@ -74,6 +89,15 @@ export class RecallEngine {
       const [category, id] = result.atomName.split("/") as [AtomCategory, string];
       const atom = await this.store.get(category, id);
       if (!atom) continue;
+
+      // User-scoped isolation: only return atoms related to this sender
+      if (options.isolationMode === "user-scoped" && options.senderId) {
+        const hasSenderSource = atom.sources.some(
+          (s) => s.senderId === options.senderId,
+        );
+        const isSharedKnowledge = atom.sources.length === 0;
+        if (!hasSenderSource && !isSharedKnowledge) continue;
+      }
 
       // If sender is known, prioritize their person atom
       if (options.senderId && atom.category === "person") {
@@ -100,6 +124,21 @@ export class RecallEngine {
         lastUsed: new Date().toISOString().slice(0, 10),
         confirmations: atom.confirmations + 1,
       }).catch(() => {});
+    }
+
+    // Phase 8: Related-Edge Spreading (depth=1, top 2 results only)
+    const recalledRefs = new Set(recalled.map(r => `${r.atom.category}/${r.atom.id}`));
+    for (const r of recalled.slice(0, 2)) {
+      for (const relRef of r.atom.related) {
+        if (recalledRefs.has(relRef)) continue;
+        const [relCat, relId] = relRef.split("/") as [AtomCategory, string];
+        if (!relCat || !relId) continue;
+        const relAtom = await this.store.get(relCat, relId);
+        if (relAtom) {
+          recalled.push({ atom: relAtom, score: r.score * 0.6, matchedChunks: [] });
+          recalledRefs.add(relRef);
+        }
+      }
     }
 
     // Sort by final score

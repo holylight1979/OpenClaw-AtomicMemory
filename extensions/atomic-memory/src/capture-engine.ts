@@ -18,14 +18,19 @@ import type { AtomCategory, DedupResult, DedupVerdict, ExtractedFact, WriteGateR
 // Extraction prompt
 // ============================================================================
 
-const EXTRACTION_SYSTEM_PROMPT = `從以下 AI 助理對話中萃取可重用的事實知識。
-輸出 JSON array，每項包含：
-- text（≤150 chars，簡潔事實）
-- category（person | topic | event | place | thing）
+const EXTRACTION_SYSTEM_PROMPT = `Extract reusable factual knowledge from the AI assistant conversation below.
+Output a JSON array (always an array, even for a single item). Each item:
+- "text": concise fact (≤150 chars)
+- "category": one of person | topic | event | place | thing
+- "who": who stated or owns this fact (name, "user", or null)
+- "about": subject of the fact (name, object, or null)
+- "when": temporal context if clear (date/time string, or null)
+- "where": location context if clear (place name, or null)
 
-只萃取：人物關係、偏好、聯絡方式、事件決策、時程安排、地點資訊、物品/資源。
-跳過：寒暄、重複已知、模糊推測、單次反應。
-無值得萃取的內容則輸出空 array []。`;
+Extract: personal info, preferences, contacts, decisions, schedules, locations, relationships, resources.
+Skip: greetings, vague guesses, one-time reactions.
+No facts → output [].
+Example: [{"text":"User lives in Taipei","category":"place","who":"user","about":"user","when":null,"where":"Taipei"}]`;
 
 // ============================================================================
 // Write Gate scoring rules
@@ -114,8 +119,9 @@ export class CaptureEngine {
    * Extract facts from conversation messages using Ollama LLM.
    * Filters out system/injected content before extraction.
    */
-  async extractFromConversation(messages: unknown[]): Promise<ExtractedFact[]> {
+  async extractFromConversation(messages: unknown[], logger?: { info: (msg: string) => void; warn: (msg: string) => void }): Promise<ExtractedFact[]> {
     const conversationText = this.extractConversationText(messages);
+    logger?.info(`atomic-memory: conversation text length: ${conversationText.length}`);
     if (conversationText.length < 20) return [];
 
     // Truncate to maxChars
@@ -129,13 +135,14 @@ export class CaptureEngine {
           jsonMode: true,
           temperature: 0.1,
           maxTokens: 500,
-          timeoutMs: 8_000,
+          timeoutMs: 15_000,
         },
       );
 
+      logger?.info(`atomic-memory: ollama response (first 200): ${response.slice(0, 200)}`);
       return this.parseExtractionResponse(response);
-    } catch {
-      // LLM unavailable — return empty
+    } catch (err) {
+      logger?.warn(`atomic-memory: extraction LLM error: ${err instanceof Error ? err.message : String(err)}`);
       return [];
     }
   }
@@ -205,10 +212,18 @@ export class CaptureEngine {
         parsed = JSON.parse(match[0]);
       }
 
-      if (!Array.isArray(parsed)) return [];
+      // Ollama may return a single object instead of array — wrap it
+      let items: unknown[];
+      if (Array.isArray(parsed)) {
+        items = parsed;
+      } else if (parsed && typeof parsed === "object" && "text" in (parsed as Record<string, unknown>)) {
+        items = [parsed];
+      } else {
+        return [];
+      }
 
       const facts: ExtractedFact[] = [];
-      for (const item of parsed.slice(0, this.maxItems)) {
+      for (const item of items.slice(0, this.maxItems)) {
         if (!item || typeof item !== "object") continue;
         const obj = item as Record<string, unknown>;
 
@@ -225,10 +240,20 @@ export class CaptureEngine {
           ? (rawCategory as AtomCategory)
           : classifyFact(text);
 
+        // Extract optional relational dimensions (who/about/when/where)
+        const who = typeof obj.who === "string" && obj.who !== "null" ? obj.who.trim() : undefined;
+        const about = typeof obj.about === "string" && obj.about !== "null" ? obj.about.trim() : undefined;
+        const when = typeof obj.when === "string" && obj.when !== "null" ? obj.when.trim() : undefined;
+        const where = typeof obj.where === "string" && obj.where !== "null" ? obj.where.trim() : undefined;
+
         facts.push({
           text,
           category,
           confidence: "[臨]", // All extracted facts start as temporary
+          ...(who ? { who } : {}),
+          ...(about ? { about } : {}),
+          ...(when ? { when } : {}),
+          ...(where ? { where } : {}),
         });
       }
 

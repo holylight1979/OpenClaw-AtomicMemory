@@ -11,6 +11,7 @@ import { basename, join } from "node:path";
 import { parseAtom } from "./atom-parser.js";
 import { serializeAtom, serializeMemoryIndex } from "./atom-writer.js";
 import { ATOM_CATEGORIES, type Atom, type AtomCategory, type Confidence } from "./types.js";
+import { resolveEntity } from "./entity-resolver.js";
 
 export class AtomStore {
   constructor(private readonly basePath: string) {
@@ -258,6 +259,12 @@ export class AtomStore {
   /** Get the base path of the atom store. */
   getBasePath(): string {
     return this.basePath;
+  }
+
+  /** Find a person atom matching the given sender identity. */
+  async findPersonBySender(senderId: string, channel: string, displayName?: string): Promise<Atom | null> {
+    const personAtoms = await this.list("person");
+    return resolveEntity(senderId, channel, displayName, personAtoms);
   }
 
   // ==========================================================================

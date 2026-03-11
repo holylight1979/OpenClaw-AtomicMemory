@@ -1146,6 +1146,9 @@ export async function runEmbeddedAttempt(
 
       // Get hook runner early so it's available when creating tools
       const hookRunner = getGlobalHookRunner();
+      if (!hookRunner) {
+        log.warn("attempt: hookRunner is null — plugin hooks will not fire for this attempt");
+      }
 
       const { builtInTools, customTools } = splitSdkTools({
         tools,
@@ -1639,6 +1642,10 @@ export async function runEmbeddedAttempt(
           messageProvider: params.messageProvider ?? undefined,
           trigger: params.trigger,
           channelId: params.messageChannel ?? params.messageProvider ?? undefined,
+          senderId: params.senderId ?? undefined,
+          senderName: params.senderName ?? undefined,
+          senderUsername: params.senderUsername ?? undefined,
+          senderIsOwner: params.senderIsOwner ?? undefined,
         };
         const hookResult = await resolvePromptBuildHookResult({
           prompt: params.prompt,
@@ -1945,7 +1952,9 @@ export async function runEmbeddedAttempt(
         // Run agent_end hooks to allow plugins to analyze the conversation
         // This is fire-and-forget, so we don't await
         // Run even on compaction timeout so plugins can log/cleanup
-        if (hookRunner?.hasHooks("agent_end")) {
+        const hasAgentEndHooks = hookRunner?.hasHooks("agent_end") ?? false;
+        log.debug(`agent_end hooks check: ${hasAgentEndHooks} (hookRunner=${!!hookRunner})`);
+        if (hasAgentEndHooks) {
           hookRunner
             .runAgentEnd(
               {
@@ -1960,6 +1969,8 @@ export async function runEmbeddedAttempt(
                 sessionId: params.sessionId,
                 workspaceDir: params.workspaceDir,
                 messageProvider: params.messageProvider ?? undefined,
+                trigger: params.trigger,
+                channelId: params.messageChannel ?? params.messageProvider ?? undefined,
               },
             )
             .catch((err) => {

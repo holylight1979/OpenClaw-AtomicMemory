@@ -27,8 +27,9 @@ export class OllamaClient {
       body: JSON.stringify({
         model: this.embeddingModel,
         input: text,
+        keep_alive: "30m",
       }),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(30_000),
     });
 
     if (!response.ok) {
@@ -97,6 +98,7 @@ export class OllamaClient {
         { role: "user", content: prompt },
       ],
       stream: false,
+      think: false, // Disable thinking mode — qwen3 consumes all tokens on thinking otherwise
       options: {
         temperature: options?.temperature ?? 0.1,
         num_predict: options?.maxTokens ?? 500,

@@ -11,6 +11,8 @@ import { join } from "node:path";
 // Config type
 // ============================================================================
 
+export type MemoryIsolation = "shared" | "user-scoped" | "owner-only";
+
 export type AtomicMemoryConfig = {
   atomStorePath: string;
   chromadb: {
@@ -25,6 +27,8 @@ export type AtomicMemoryConfig = {
   autoRecall: boolean;
   autoCapture: boolean;
   ownerOnly: boolean;
+  /** Memory isolation mode: shared (default), user-scoped, or owner-only. */
+  memoryIsolation: MemoryIsolation;
   recall: {
     topK: number;
     minScore: number;
@@ -85,7 +89,7 @@ export const atomicMemoryConfigSchema = {
 
     assertAllowedKeys(
       cfg,
-      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "recall", "capture", "writeGate"],
+      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate"],
       "atomic-memory config",
     );
 
@@ -123,9 +127,12 @@ export const atomicMemoryConfigSchema = {
       autoRecall: boolOrDefault(cfg.autoRecall, true),
       autoCapture: boolOrDefault(cfg.autoCapture, true),
       ownerOnly: boolOrDefault(cfg.ownerOnly, true),
+      memoryIsolation: (["shared", "user-scoped", "owner-only"] as const).includes(cfg.memoryIsolation as any)
+        ? (cfg.memoryIsolation as MemoryIsolation)
+        : "shared",
       recall: {
         topK: numOrDefault(recallRaw.topK, 5, 1, 20),
-        minScore: numOrDefault(recallRaw.minScore, 0.55, 0, 1),
+        minScore: numOrDefault(recallRaw.minScore, 0.40, 0, 1),
       },
       capture: {
         maxChars: numOrDefault(captureRaw.maxChars, 3000, 100, 10000),
