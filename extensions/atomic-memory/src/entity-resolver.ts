@@ -5,7 +5,8 @@
  * V1: Simple heuristic matching on triggers and sources.
  */
 
-import type { Atom, AtomSource } from "./types.js";
+import type { Atom, AtomSource, Confidence } from "./types.js";
+import type { AtomStore } from "./atom-store.js";
 
 /**
  * Find a person atom that matches the given sender identity.
@@ -63,6 +64,59 @@ export function resolveEntity(
   }
 
   return null;
+}
+
+/**
+ * Find or auto-create a person atom for a sender.
+ * Called on each agent_end to ensure every identified sender has a person atom.
+ *
+ * - First tries resolveEntity() to find existing match
+ * - If not found, creates a new person atom with sender identity as triggers
+ * - Always updates lastUsed on the matched/created atom
+ */
+export async function ensurePersonAtom(
+  senderId: string,
+  channel: string,
+  displayName: string | undefined,
+  store: AtomStore,
+): Promise<Atom> {
+  const personAtoms = await store.list("person");
+  const existing = resolveEntity(senderId, channel, displayName, personAtoms);
+
+  if (existing) {
+    // Update lastUsed and ensure source is tracked
+    await store.update("person", existing.id, {
+      lastUsed: new Date().toISOString().slice(0, 10),
+      sources: [{ channel, senderId }],
+    });
+    return (await store.get("person", existing.id)) ?? existing;
+  }
+
+  // Create new person atom
+  const atomId = (displayName ?? senderId).slice(0, 40).replace(/[<>:"/\\|?*]/g, "").replace(/\s+/g, "-").toLowerCase();
+  const triggers: string[] = [];
+  if (displayName && displayName.length >= 2) triggers.push(displayName);
+  if (senderId.length >= 2 && senderId !== displayName) triggers.push(senderId);
+  triggers.push(`${channel}:${senderId}`);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const newAtom: Atom = {
+    id: atomId,
+    title: displayName ?? senderId,
+    category: "person",
+    confidence: "[臨]" as Confidence,
+    triggers,
+    lastUsed: today,
+    confirmations: 0,
+    tags: ["auto-created"],
+    related: [],
+    sources: [{ channel, senderId }],
+    knowledge: `- ${channel} 使用者: ${displayName ?? senderId}`,
+    actions: "",
+    evolutionLog: [`${today}: 自動建立 (${channel})`],
+  };
+
+  return store.create(newAtom);
 }
 
 /**

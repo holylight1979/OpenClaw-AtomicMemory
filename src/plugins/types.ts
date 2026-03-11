@@ -404,6 +404,14 @@ export type PluginHookAgentContext = {
   trigger?: string;
   /** Channel identifier (e.g. "telegram", "discord", "whatsapp"). */
   channelId?: string;
+  /** Sender's platform-specific ID (e.g. Discord user ID, Telegram user ID). */
+  senderId?: string;
+  /** Sender's display name. */
+  senderName?: string;
+  /** Sender's username (if different from display name). */
+  senderUsername?: string;
+  /** Whether the sender is an owner of this agent. */
+  senderIsOwner?: boolean;
 };
 
 // before_model_resolve hook

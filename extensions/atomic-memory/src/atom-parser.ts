@@ -179,6 +179,7 @@ export function chunkAtom(atom: Atom): AtomChunk[] {
         confirmations: atom.confirmations,
         triggers: atom.triggers.join(", "),
         tags: atom.tags.join(", "),
+        sourceUserId: atom.sources[0]?.senderId ?? undefined,
       });
       chunkIndex++;
     }

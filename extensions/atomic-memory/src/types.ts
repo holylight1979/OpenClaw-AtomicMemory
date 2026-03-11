@@ -90,6 +90,8 @@ export type AtomChunk = {
   confirmations: number;
   triggers: string;
   tags: string;
+  /** Primary source user ID for user-scoped filtering. */
+  sourceUserId?: string;
 };
 
 // ============================================================================
@@ -124,6 +126,14 @@ export type ExtractedFact = {
   text: string;
   category: AtomCategory;
   confidence: Confidence;
+  /** Who stated or owns this fact (name, "user", or undefined). */
+  who?: string;
+  /** Subject of the fact (name, object, or undefined). */
+  about?: string;
+  /** Temporal context if clear (date/time string). */
+  when?: string;
+  /** Location context if clear (place name). */
+  where?: string;
 };
 
 export type WriteGateAction = "add" | "update" | "ask" | "skip";

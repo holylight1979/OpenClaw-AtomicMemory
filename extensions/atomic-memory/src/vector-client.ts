@@ -46,8 +46,26 @@ let chromadbImport: Promise<{
 
 function loadChromaDB() {
   if (!chromadbImport) {
-    // Dynamic import — chromadb may not be installed at type-check time
-    chromadbImport = (Function('return import("chromadb")')() as unknown) as typeof chromadbImport;
+    // Dynamic import — try multiple resolution strategies for Jiti compatibility
+    chromadbImport = (async () => {
+      // Strategy 1: direct dynamic import
+      try {
+        return await (Function('return import("chromadb")')() as Promise<typeof chromadbImport extends Promise<infer T> ? T : never>);
+      } catch { /* fall through */ }
+      // Strategy 2: require from plugin's node_modules
+      try {
+        const { createRequire } = await import("node:module");
+        const req = createRequire(import.meta.url ?? __filename);
+        return req("chromadb") as Awaited<NonNullable<typeof chromadbImport>>;
+      } catch { /* fall through */ }
+      // Strategy 3: absolute path
+      try {
+        const path = await import("node:path");
+        const absPath = path.resolve(__dirname ?? ".", "../node_modules/chromadb");
+        return await (Function('p', 'return import(p)')(absPath) as Promise<Awaited<NonNullable<typeof chromadbImport>>>);
+      } catch { /* fall through */ }
+      throw new Error("Failed to load chromadb module");
+    })();
   }
   return chromadbImport!;
 }
@@ -70,7 +88,11 @@ export class VectorClient {
   private async ensureInitialized(): Promise<void> {
     if (this.collection) return;
     if (this.initPromise) return this.initPromise;
-    this.initPromise = this.doInitialize();
+    this.initPromise = this.doInitialize().catch((err) => {
+      // Clear cached promise so next call retries instead of returning the same rejection
+      this.initPromise = null;
+      throw err;
+    });
     return this.initPromise;
   }
 
@@ -116,6 +138,7 @@ export class VectorClient {
           confirmations: c.confirmations,
           triggers: c.triggers,
           tags: c.tags,
+          sourceUserId: c.sourceUserId ?? "",
         })),
         documents: batch.map((c) => c.text),
       });
