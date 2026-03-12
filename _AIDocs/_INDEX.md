@@ -14,3 +14,4 @@
 | 8 | [Features.md](Features.md) | 功能子系統 — Memory/Auto-reply/Media/Browser/ACP/Cron/TTS |
 | 9 | [Extensions.md](Extensions.md) | Extensions（40 插件）— Memory/Channel/Provider/System 分類 |
 | 10 | [UI-Skills-Apps.md](UI-Skills-Apps.md) | UI Dashboard + 52 Skills + Scripts + Native Apps |
+| 11 | [Docs-Config-Map.md](Docs-Config-Map.md) | MD 文件與設定檔角色對照 — 運作流程、Workspace 注入、設定檔協作 |
