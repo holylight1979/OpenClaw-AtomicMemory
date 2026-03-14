@@ -19,7 +19,7 @@ import { consolidateNewFacts } from "./src/cross-session.js";
 import { ensurePersonAtom } from "./src/entity-resolver.js";
 import { detectContradiction, detectForgetIntent } from "./src/forget-engine.js";
 import { detectBlindSpot } from "./src/blind-spot.js";
-import { generateEpisodicSummary, storeEpisodicAtom, cleanExpiredEpisodic } from "./src/episodic-engine.js";
+import { generateEpisodicSummary, storeEpisodicAtom, cleanExpiredEpisodic, listEpisodicSummaries } from "./src/episodic-engine.js";
 import { classifyIntent } from "./src/intent-classifier.js";
 import { createLogger, type Logger } from "./src/logger.js";
 import { OllamaClient } from "./src/ollama-client.js";
@@ -36,6 +36,14 @@ import {
   saveReflectionMetrics,
   updateReflection,
 } from "./src/wisdom-engine.js";
+import {
+  checkPeriodicReview,
+  calculateMaturity,
+  detectOscillation,
+  loadIterationState,
+  saveIterationState,
+} from "./src/self-iteration.js";
+
 import { isTestFact, readFactsFromWorkspace } from "./src/workspace-reader.js";
 import { atomicMemoryConfigSchema, type AtomicMemoryConfig } from "./config.js";
 
@@ -81,6 +89,7 @@ function registerHooks(state: PluginState): void {
   const intentLog = createLogger("intent", log as any);
   const blindSpotLog = createLogger("blind-spot", log as any);
   const wisdomLog = createLogger("wisdom", log as any);
+  const iterationLog = createLogger("iteration", log as any);
 
   // ──────────────────────────────────────────────────────────────────────────
   // Hook 0: Session Start — initialize session state
@@ -102,6 +111,32 @@ function registerHooks(state: PluginState): void {
         }
       } catch (err) {
         wisdomLog.warn(`reflection load failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Self-Iteration: periodic review check + maturity phase logging
+    if (cfg.selfIteration.enabled) {
+      try {
+        const atomStorePath = api.resolvePath(cfg.atomStorePath);
+        const reviewReminder = await checkPeriodicReview(atomStorePath, cfg.selfIteration);
+        if (reviewReminder) {
+          iterationLog.info(reviewReminder);
+        }
+
+        const iterState = await loadIterationState(atomStorePath);
+        const episodics = await listEpisodicSummaries(atomStorePath);
+        const totalEpisodics = episodics.length;
+        const phase = calculateMaturity(totalEpisodics);
+        iterationLog.info(`maturity: ${phase} (${totalEpisodics} episodics)`);
+
+        // Update persisted state if changed
+        if (iterState.totalEpisodics !== totalEpisodics || iterState.maturityPhase !== phase) {
+          iterState.totalEpisodics = totalEpisodics;
+          iterState.maturityPhase = phase;
+          await saveIterationState(atomStorePath, iterState);
+        }
+      } catch (err) {
+        iterationLog.warn(`iteration check failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   });
@@ -483,6 +518,33 @@ function registerHooks(state: PluginState): void {
         }
       } catch (err) {
         episodicLog.warn(`episodic generation failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Self-Iteration: oscillation detection + state update
+    if (cfg.selfIteration.enabled) {
+      try {
+        const atomStorePath = api.resolvePath(cfg.atomStorePath);
+        const recentEpisodics = await listEpisodicSummaries(atomStorePath, {
+          limit: cfg.selfIteration.oscillationWindow,
+        });
+
+        const report = detectOscillation(recentEpisodics, cfg.selfIteration);
+        if (report.shouldPause) {
+          iterationLog.warn(`oscillation detected: ${report.reason}`);
+        }
+
+        // Update iteration state
+        const allEpisodics = await listEpisodicSummaries(atomStorePath);
+        const totalEpisodics = allEpisodics.length;
+        const phase = calculateMaturity(totalEpisodics);
+        const iterState = await loadIterationState(atomStorePath);
+        iterState.totalEpisodics = totalEpisodics;
+        iterState.maturityPhase = phase;
+        await saveIterationState(atomStorePath, iterState);
+        iterationLog.info(`state updated: phase=${phase}, episodics=${totalEpisodics}`);
+      } catch (err) {
+        iterationLog.warn(`iteration update failed: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
   });

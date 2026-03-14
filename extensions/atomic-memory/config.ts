@@ -77,6 +77,16 @@ export type AtomicMemoryConfig = {
     /** Enable reflection tracking (accuracy metrics). Default true if wisdom enabled. */
     reflectionTracking: boolean;
   };
+  selfIteration: {
+    /** Enable self-iteration subsystem. Default true. */
+    enabled: boolean;
+    /** Number of recent episodics to scan for oscillation. Default 3. */
+    oscillationWindow: number;
+    /** Minimum distinct sessions an atom must appear in to flag oscillation. Default 2. */
+    oscillationThreshold: number;
+    /** Episodic count between periodic reviews. Default 25. */
+    reviewInterval: number;
+  };
 };
 
 // ============================================================================
@@ -125,7 +135,7 @@ export const atomicMemoryConfigSchema = {
 
     assertAllowedKeys(
       cfg,
-      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate", "tokenBudget", "actr", "episodic", "wisdom"],
+      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate", "tokenBudget", "actr", "episodic", "wisdom", "selfIteration"],
       "atomic-memory config",
     );
 
@@ -164,6 +174,10 @@ export const atomicMemoryConfigSchema = {
     // wisdom sub-config
     const wisdomRaw = (cfg.wisdom ?? {}) as Record<string, unknown>;
     assertAllowedKeys(wisdomRaw, ["enabled", "situationClassifier", "reflectionTracking"], "wisdom config");
+
+    // selfIteration sub-config
+    const selfIterationRaw = (cfg.selfIteration ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(selfIterationRaw, ["enabled", "oscillationWindow", "oscillationThreshold", "reviewInterval"], "selfIteration config");
 
     return {
       atomStorePath: strOrDefault(cfg.atomStorePath, DEFAULT_ATOM_STORE_PATH),
@@ -215,6 +229,12 @@ export const atomicMemoryConfigSchema = {
         enabled: boolOrDefault(wisdomRaw.enabled, false),
         situationClassifier: boolOrDefault(wisdomRaw.situationClassifier, true),
         reflectionTracking: boolOrDefault(wisdomRaw.reflectionTracking, true),
+      },
+      selfIteration: {
+        enabled: boolOrDefault(selfIterationRaw.enabled, true),
+        oscillationWindow: numOrDefault(selfIterationRaw.oscillationWindow, 3, 1, 20),
+        oscillationThreshold: numOrDefault(selfIterationRaw.oscillationThreshold, 2, 1, 10),
+        reviewInterval: numOrDefault(selfIterationRaw.reviewInterval, 25, 1, 200),
       },
     };
   },
