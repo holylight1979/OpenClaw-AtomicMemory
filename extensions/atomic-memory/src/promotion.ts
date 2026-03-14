@@ -8,6 +8,7 @@
  */
 
 import type { AtomStore } from "./atom-store.js";
+import type { Logger } from "./logger.js";
 import type { Confidence, DecayAction, DecayResult, PromotionAction, PromotionResult } from "./types.js";
 
 // Decay thresholds (days since last used)
@@ -122,6 +123,65 @@ export class PromotionEngine {
     }
 
     return results;
+  }
+
+  /**
+   * Immediate promotion check for a single atom (called after consolidation).
+   *
+   * Rules:
+   * - [臨] with confirmations ≥ 2 → auto-promote to [觀]
+   * - [觀] with confirmations ≥ 4 → suggest only (returns "suggest", does NOT auto-promote)
+   *
+   * Returns null if atom not found or no action needed.
+   */
+  async immediatePromotionCheck(
+    atomName: string,
+    log?: Logger,
+  ): Promise<PromotionResult | null> {
+    const slashIdx = atomName.indexOf("/");
+    if (slashIdx < 0) return null;
+
+    const category = atomName.slice(0, slashIdx);
+    const id = atomName.slice(slashIdx + 1);
+    const atom = await this.store.get(category as Parameters<typeof this.store.get>[0], id);
+    if (!atom) return null;
+
+    const atomRef = `${atom.category}/${atom.id}`;
+
+    // [臨] → [觀]: auto-promote at 2+ confirmations
+    if (atom.confidence === "[臨]" && atom.confirmations >= 2) {
+      const today = new Date().toISOString().slice(0, 10);
+      await this.store.update(atom.category, atom.id, {
+        confidence: "[觀]",
+        lastUsed: today,
+        appendEvolution: `${today}: 即時晉升 [臨]→[觀]（${atom.confirmations} 次確認, cross-session consolidation）`,
+      });
+
+      log?.info(`immediate promotion: ${atomRef} [臨]→[觀] (c:${atom.confirmations})`);
+
+      return {
+        atomRef,
+        from: "[臨]",
+        to: "[觀]",
+        action: "promoted",
+        confirmations: atom.confirmations,
+      };
+    }
+
+    // [觀] → [固]: suggest only (do not auto-promote)
+    if (atom.confidence === "[觀]" && atom.confirmations >= 4) {
+      log?.info(`immediate suggestion: ${atomRef} [觀]→[固] (c:${atom.confirmations})`);
+
+      return {
+        atomRef,
+        from: "[觀]",
+        to: "[固]",
+        action: "suggest",
+        confirmations: atom.confirmations,
+      };
+    }
+
+    return null;
   }
 
   /**

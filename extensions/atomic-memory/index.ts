@@ -15,12 +15,16 @@ import { chunkAtom } from "./src/atom-parser.js";
 import { AtomStore } from "./src/atom-store.js";
 import { CaptureEngine } from "./src/capture-engine.js";
 import { formatAtomicMemoriesContext } from "./src/context-formatter.js";
+import { consolidateNewFacts } from "./src/cross-session.js";
 import { ensurePersonAtom } from "./src/entity-resolver.js";
 import { detectContradiction, detectForgetIntent } from "./src/forget-engine.js";
+import { detectBlindSpot } from "./src/blind-spot.js";
+import { classifyIntent } from "./src/intent-classifier.js";
 import { createLogger, type Logger } from "./src/logger.js";
 import { OllamaClient } from "./src/ollama-client.js";
 import { PromotionEngine } from "./src/promotion.js";
 import { RecallEngine } from "./src/recall-engine.js";
+import { SessionStateManager } from "./src/session-state.js";
 import type { AtomCategory, Confidence, RecalledAtom } from "./src/types.js";
 import { ATOM_CATEGORIES, CATEGORY_LABELS } from "./src/types.js";
 import { VectorClient } from "./src/vector-client.js";
@@ -39,6 +43,7 @@ type PluginState = {
   recall: RecallEngine;
   capture: CaptureEngine;
   promotion: PromotionEngine;
+  sessionState: SessionStateManager;
   log: Logger;
   api: OpenClawPluginApi;
   // Pending forget state — tracks forget candidates awaiting user confirmation
@@ -62,7 +67,19 @@ type PluginState = {
 // ============================================================================
 
 function registerHooks(state: PluginState): void {
-  const { cfg, store, ollama, vectors, recall, capture, promotion, log, api } = state;
+  const { cfg, store, ollama, vectors, recall, capture, promotion, sessionState, log, api } = state;
+  const intentLog = createLogger("intent", log as any);
+  const blindSpotLog = createLogger("blind-spot", log as any);
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Hook 0: Session Start — initialize session state
+  // ──────────────────────────────────────────────────────────────────────────
+
+  api.on("session_start", async (_event, ctx) => {
+    const sessionKey = ctx.sessionKey ?? ctx.sessionId;
+    sessionState.getOrCreate(sessionKey);
+    log.info(`session_start: initialized state for ${sessionKey}`);
+  });
 
   // ──────────────────────────────────────────────────────────────────────────
   // Hook 1: Auto-Recall (before_agent_start)
@@ -101,6 +118,10 @@ function registerHooks(state: PluginState): void {
 
         log.info(`recall query (${queryForRecall.length} chars): "${queryForRecall.slice(0, 120)}"`);
 
+        // ── Intent classification ────────────────────────────────────────
+        const intentResult = classifyIntent(queryForRecall);
+        intentLog.info(`${intentResult.intent} (confidence=${intentResult.confidence.toFixed(2)})`);
+
         // ── Forget flow ──────────────────────────────────────────────────
         const forgetResult = handleForgetFlow(state, queryForRecall);
         if (forgetResult !== undefined) {
@@ -130,16 +151,34 @@ function registerHooks(state: PluginState): void {
           actrWeight: cfg.actr.weight,
         });
 
+        // ── Session state: record turn ─────────────────────────────────
+        const sessionKey = ctx.sessionKey ?? `${channelId}-${senderId ?? "anon"}`;
+        const sessState = sessionState.getOrCreate(sessionKey, { channel: channelId, senderId: senderId });
+        if (!sessState.channel) sessState.channel = channelId;
+        if (!sessState.senderId && senderId) sessState.senderId = senderId;
+        const atomRefs = atoms.map(r => `${r.atom.category}/${r.atom.id}`);
+        sessionState.recordTurn(sessionKey, intentResult.intent, atomRefs);
+
+        // ── Blind-spot detection ─────────────────────────────────────────
+        const blindSpot = detectBlindSpot(atoms, queryForRecall.length);
+        if (blindSpot) {
+          blindSpotLog.info(blindSpot);
+        }
+
         // Test cleanup suffix
         const testCount = store.countTestAtoms();
         const testCheckSuffix = testCount > 0 && !state.testSession.active
           ? `\n\n<atomic-memory-action action="test-session-check">\nNote: There are ${testCount} test memory items pending cleanup. When appropriate, naturally ask if the memory test is done and whether to clean up. Keep it brief.\n</atomic-memory-action>`
           : "";
 
+        // Blind-spot context suffix
+        const blindSpotSuffix = blindSpot ? `\n${blindSpot}` : "";
+
         if (atoms.length === 0) {
           log.info(`recall returned 0 atoms for channel ${channelId}`);
-          if (testCheckSuffix) {
-            return { prependContext: testCheckSuffix.trim() };
+          const noRecallContext = [blindSpotSuffix, testCheckSuffix].filter(Boolean).join("");
+          if (noRecallContext) {
+            return { prependContext: noRecallContext.trim() };
           }
           return;
         }
@@ -152,7 +191,7 @@ function registerHooks(state: PluginState): void {
             normal: cfg.tokenBudget.mediumBudget,
             deep: cfg.tokenBudget.longBudget,
             charsPerToken: cfg.tokenBudget.charsPerToken,
-          }) + testCheckSuffix,
+          }) + blindSpotSuffix + testCheckSuffix,
         };
       } catch (err) {
         log.warn(`recall failed: ${String(err)}`);
@@ -287,6 +326,34 @@ function registerHooks(state: PluginState): void {
         if (stored > 0 || superseded > 0) {
           log.info(`auto-captured ${stored} facts, superseded ${superseded} from channel ${channelId}`);
           await store.updateMemoryIndex();
+        }
+
+        // ── Cross-session consolidation ───────────────────────────────────
+        if (facts.length > 0 && ollama.isHealthy()) {
+          try {
+            const csLog = createLogger("consolidation", log as any);
+            const sessionDate = new Date().toISOString().slice(0, 10);
+            const consolidations = await consolidateNewFacts(
+              facts, vectors, ollama, store, sessionDate, csLog,
+            );
+
+            // Immediate promotion for atoms that reached threshold
+            for (const cr of consolidations) {
+              if (cr.suggestPromotion) {
+                const promoResult = await promotion.immediatePromotionCheck(cr.atomRef, csLog);
+                if (promoResult && promoResult.action === "promoted") {
+                  csLog.info(`immediate promotion executed: ${promoResult.atomRef} ${promoResult.from}→${promoResult.to}`);
+                }
+              }
+            }
+
+            if (consolidations.length > 0) {
+              csLog.info(`consolidation done — ${consolidations.length} atoms updated`);
+              await store.updateMemoryIndex();
+            }
+          } catch (err) {
+            log.warn(`cross-session consolidation failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
         }
 
         // Auto-create/update person atom
@@ -967,7 +1034,7 @@ function registerCli(state: PluginState): void {
 // ============================================================================
 
 function registerService(state: PluginState): void {
-  const { ollama, vectors, log, api } = state;
+  const { ollama, vectors, sessionState, log, api } = state;
 
   api.registerService({
     id: "atomic-memory",
@@ -987,6 +1054,7 @@ function registerService(state: PluginState): void {
       }
     },
     stop() {
+      sessionState.dispose();
       log.info("stopped");
     },
   });
@@ -1022,6 +1090,7 @@ const atomicMemoryPlugin = {
       cfg.capture.maxItems,
     );
     const promotion = new PromotionEngine(store);
+    const sessionStateMgr = new SessionStateManager();
     const log = createLogger("core", api.logger as any);
 
     log.info(`registered (store: ${resolvedStorePath}, lazy init)`);
@@ -1035,6 +1104,7 @@ const atomicMemoryPlugin = {
       recall,
       capture,
       promotion,
+      sessionState: sessionStateMgr,
       log,
       api,
       pendingForget: null,
