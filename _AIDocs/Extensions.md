@@ -4,7 +4,7 @@
 
 | Extension | 說明 | 行數 |
 |-----------|------|------|
-| **atomic-memory** | 結構化知識記憶（信心分層 [固]/[觀]/[臨]、Ollama 萃取、ChromaDB 向量搜尋） | 1238 |
+| **atomic-memory** | 結構化知識記憶（信心分層 [固]/[觀]/[臨]、Ollama 萃取、ChromaDB 向量搜尋、ACT-R activation scoring、3 階段 token budget） | ~1400 |
 | **memory-core** | 檔案型記憶搜尋工具 + CLI `/memory` | 38 |
 | **memory-lancedb** | LanceDB 向量長期記憶（auto-recall + auto-capture） | 678 |
 

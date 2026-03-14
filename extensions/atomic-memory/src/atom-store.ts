@@ -36,6 +36,13 @@ export class AtomStore {
     if (!existsSync(testDir)) {
       mkdirSync(testDir, { recursive: true });
     }
+    // Subsystem directories for future sessions
+    for (const sub of ["episodic", "wisdom", "_iteration", "_actr"]) {
+      const dir = join(this.basePath, sub);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
+    }
   }
 
   /** Resolve path for an atom file. */

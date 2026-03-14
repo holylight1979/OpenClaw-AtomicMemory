@@ -77,6 +77,20 @@ const WRITE_GATE_RULES: WriteGateRule[] = [
     score: 0.10,
     test: (t) => !/等一下|稍後|待會|later|in a moment|hold on/i.test(t),
   },
+  {
+    label: "CJK operational fact (noun+verb+object)",
+    score: 0.10,
+    test: (t) =>
+      // CJK subject (2+ chars) + multi-char verb + object (2+ chars)
+      // Uses word-level verbs to avoid false positives on short casual phrases
+      /[\u4e00-\u9fff]{2,6}(?:決定|使用|設定|安裝|部署|啟動|關閉|更新|刪除|建立|負責|管理|選擇|修改|執行|處理|開發|維護|購買|搬到|住在|工作|喜歡|擅長|偏好)[\u4e00-\u9fff]{2,10}/.test(t),
+  },
+  {
+    label: "transient/temporary content",
+    score: -0.10,
+    test: (t) =>
+      /\b(timeout|retry|retries)\b|暫時|臨時|測試|test[ing]*\b/i.test(t),
+  },
 ];
 
 // ============================================================================
@@ -278,7 +292,7 @@ export class CaptureEngine {
     for (const rule of WRITE_GATE_RULES) {
       if (rule.test(fact.text)) {
         quality += rule.score;
-        reasons.push(`+${rule.score}: ${rule.label}`);
+        reasons.push(`${rule.score >= 0 ? "+" : ""}${rule.score}: ${rule.label}`);
       }
     }
 

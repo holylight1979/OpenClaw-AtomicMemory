@@ -5,12 +5,103 @@
  * Shared with Claude Code's memory system — same Ollama instance, same models.
  */
 
+import { createLogger, type Logger } from "./logger.js";
+import { DEFAULT_OLLAMA_RESILIENCE, type OllamaResilienceConfig } from "./config.js";
+
+// ============================================================================
+// Health State
+// ============================================================================
+
+export type HealthStatus = "healthy" | "degraded";
+
+export type HealthState = {
+  status: HealthStatus;
+  lastError?: Date;
+  consecutiveFailures: number;
+};
+
+// ============================================================================
+// Retry
+// ============================================================================
+
+type RetryOpts = {
+  timeouts: number[];
+  label: string;
+};
+
+async function withRetry<T>(
+  fn: (timeoutMs: number) => Promise<T>,
+  opts: RetryOpts,
+  health: HealthState,
+  degradedThreshold: number,
+  log: Logger,
+): Promise<T> {
+  const { timeouts, label } = opts;
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < timeouts.length; attempt++) {
+    try {
+      const result = await fn(timeouts[attempt]);
+      // Success — reset health
+      health.status = "healthy";
+      health.consecutiveFailures = 0;
+      return result;
+    } catch (err) {
+      lastError = err;
+      health.consecutiveFailures++;
+      health.lastError = new Date();
+
+      if (health.consecutiveFailures >= degradedThreshold) {
+        health.status = "degraded";
+      }
+
+      if (attempt < timeouts.length - 1) {
+        log.warn(
+          `${label} attempt ${attempt + 1}/${timeouts.length} failed: ${err instanceof Error ? err.message : String(err)} — retrying with ${timeouts[attempt + 1]}ms timeout`,
+        );
+      }
+    }
+  }
+
+  log.error(`${label} all ${timeouts.length} attempts failed`);
+  throw lastError;
+}
+
+// ============================================================================
+// OllamaClient
+// ============================================================================
+
 export class OllamaClient {
+  private readonly log: Logger;
+  private readonly health: HealthState = {
+    status: "healthy",
+    consecutiveFailures: 0,
+  };
+  private readonly resilience: OllamaResilienceConfig;
+
   constructor(
     private readonly baseUrl: string = "http://127.0.0.1:11434",
     private readonly embeddingModel: string = "qwen3-embedding",
     private readonly extractionModel: string = "qwen3:1.7b",
-  ) {}
+    resilience?: Partial<OllamaResilienceConfig>,
+  ) {
+    this.log = createLogger("ollama");
+    this.resilience = { ...DEFAULT_OLLAMA_RESILIENCE, ...resilience };
+  }
+
+  // ==========================================================================
+  // Health
+  // ==========================================================================
+
+  /** Check if the client is in a healthy state (no consecutive failures). */
+  isHealthy(): boolean {
+    return this.health.status === "healthy";
+  }
+
+  /** Get a snapshot of current health state. */
+  getHealthState(): Readonly<HealthState> {
+    return { ...this.health };
+  }
 
   // ==========================================================================
   // Embedding
@@ -18,30 +109,38 @@ export class OllamaClient {
 
   /**
    * Generate embedding vector for a text string.
-   * Uses Ollama's /api/embed endpoint.
+   * Uses Ollama's /api/embed endpoint. Retries on failure.
    */
   async embed(text: string): Promise<number[]> {
-    const response = await fetch(`${this.baseUrl}/api/embed`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: this.embeddingModel,
-        input: text,
-        keep_alive: "30m",
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    return withRetry(
+      async (timeoutMs) => {
+        const response = await fetch(`${this.baseUrl}/api/embed`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: this.embeddingModel,
+            input: text,
+            keep_alive: "30m",
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
 
-    if (!response.ok) {
-      throw new Error(`Ollama embed failed: ${response.status} ${response.statusText}`);
-    }
+        if (!response.ok) {
+          throw new Error(`Ollama embed failed: ${response.status} ${response.statusText}`);
+        }
 
-    const data = (await response.json()) as { embeddings: number[][] };
-    if (!data.embeddings?.[0]) {
-      throw new Error("Ollama returned empty embeddings");
-    }
+        const data = (await response.json()) as { embeddings: number[][] };
+        if (!data.embeddings?.[0]) {
+          throw new Error("Ollama returned empty embeddings");
+        }
 
-    return data.embeddings[0];
+        return data.embeddings[0];
+      },
+      { timeouts: this.resilience.retryTimeouts, label: "embed" },
+      this.health,
+      this.resilience.degradedThreshold,
+      this.log,
+    );
   }
 
   /**
@@ -51,22 +150,30 @@ export class OllamaClient {
   async embedBatch(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
 
-    const response = await fetch(`${this.baseUrl}/api/embed`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: this.embeddingModel,
-        input: texts,
-      }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    return withRetry(
+      async (timeoutMs) => {
+        const response = await fetch(`${this.baseUrl}/api/embed`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model: this.embeddingModel,
+            input: texts,
+          }),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
 
-    if (!response.ok) {
-      throw new Error(`Ollama embedBatch failed: ${response.status} ${response.statusText}`);
-    }
+        if (!response.ok) {
+          throw new Error(`Ollama embedBatch failed: ${response.status} ${response.statusText}`);
+        }
 
-    const data = (await response.json()) as { embeddings: number[][] };
-    return data.embeddings;
+        const data = (await response.json()) as { embeddings: number[][] };
+        return data.embeddings;
+      },
+      { timeouts: this.resilience.retryTimeouts, label: "embedBatch" },
+      this.health,
+      this.resilience.degradedThreshold,
+      this.log,
+    );
   }
 
   // ==========================================================================
@@ -75,7 +182,7 @@ export class OllamaClient {
 
   /**
    * Generate a chat completion from Ollama.
-   * Used for knowledge extraction and classification.
+   * Used for knowledge extraction and classification. Retries on failure.
    */
   async chat(
     system: string,
@@ -89,7 +196,10 @@ export class OllamaClient {
     },
   ): Promise<string> {
     const model = options?.model ?? this.extractionModel;
-    const timeoutMs = options?.timeoutMs ?? 10_000;
+    const baseTimeout = options?.timeoutMs ?? 10_000;
+
+    // Scale retry timeouts proportionally if base timeout is larger than default
+    const timeouts = this.resilience.retryTimeouts.map((t) => Math.max(t, baseTimeout));
 
     const body: Record<string, unknown> = {
       model,
@@ -110,19 +220,27 @@ export class OllamaClient {
       body.format = "json";
     }
 
-    const response = await fetch(`${this.baseUrl}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
+    return withRetry(
+      async (timeoutMs) => {
+        const response = await fetch(`${this.baseUrl}/api/chat`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs),
+        });
 
-    if (!response.ok) {
-      throw new Error(`Ollama chat failed: ${response.status} ${response.statusText}`);
-    }
+        if (!response.ok) {
+          throw new Error(`Ollama chat failed: ${response.status} ${response.statusText}`);
+        }
 
-    const data = (await response.json()) as { message?: { content?: string } };
-    return data.message?.content ?? "";
+        const data = (await response.json()) as { message?: { content?: string } };
+        return data.message?.content ?? "";
+      },
+      { timeouts, label: "chat" },
+      this.health,
+      this.resilience.degradedThreshold,
+      this.log,
+    );
   }
 
   // ==========================================================================

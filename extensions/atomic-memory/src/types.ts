@@ -174,3 +174,121 @@ export type DecayResult = {
   daysSinceUsed: number;
   action: DecayAction;
 };
+
+// ============================================================================
+// Session State (S3: session-state.ts)
+// ============================================================================
+
+export type IntentType =
+  | "memory-query"
+  | "info-request"
+  | "task"
+  | "social"
+  | "greeting"
+  | "command"
+  | "general";
+
+export type SessionState = {
+  sessionKey: string;
+  startTime: number;
+  lastActivity: number;
+  turns: number;
+  /** Intent distribution — counts per intent type. */
+  intents: Partial<Record<IntentType, number>>;
+  /** Atom refs recalled during this session. */
+  recalledAtoms: string[];
+  /** Atom refs created or updated during this session. */
+  modifiedAtoms: string[];
+  channel?: string;
+  senderId?: string;
+};
+
+// ============================================================================
+// Episodic Summary (S4: episodic-engine.ts)
+// ============================================================================
+
+export type EpisodicSummary = {
+  sessionKey: string;
+  startTime: number;
+  endTime: number;
+  turns: number;
+  /** Most frequent intent in this session. */
+  dominantIntent: IntentType;
+  /** Topics discussed (extracted from atom triggers). */
+  topicsDiscussed: string[];
+  /** Atom refs recalled. */
+  atomsRecalled: string[];
+  /** Atom refs created or updated. */
+  atomsModified: string[];
+  channel?: string;
+  senderId?: string;
+};
+
+// ============================================================================
+// Wisdom Metrics (S7: wisdom-engine.ts)
+// ============================================================================
+
+export type AccuracyCounter = {
+  correct: number;
+  total: number;
+};
+
+export type WisdomMetrics = {
+  firstApproachAccuracy: Partial<Record<IntentType, AccuracyCounter>>;
+  silenceAccuracy: {
+    heldBackOk: number;
+    heldBackMissed: number;
+  };
+  blindSpots: string[];
+  lastReflection?: string;
+};
+
+// ============================================================================
+// Self-Iteration State (S6: self-iteration.ts)
+// ============================================================================
+
+export type MaturityPhase = "learning" | "stable" | "mature";
+
+export type IterationState = {
+  /** Number of episodic atoms seen so far. */
+  totalEpisodics: number;
+  maturityPhase: MaturityPhase;
+  /** ISO date of last periodic review. */
+  lastReviewDate?: string;
+  /** Episodic count at last review. */
+  episodicsAtLastReview: number;
+};
+
+// ============================================================================
+// Cross-Session Consolidation (S5: cross-session.ts)
+// ============================================================================
+
+export type ConsolidationResult = {
+  atomRef: string;
+  oldConfirmations: number;
+  newConfirmations: number;
+  suggestPromotion?: "to-觀" | "to-固";
+};
+
+// ============================================================================
+// Situation Classification (S7: wisdom-engine.ts)
+// ============================================================================
+
+export type SituationApproach = "direct" | "confirm" | "plan";
+
+export type SituationAdvice = {
+  approach: SituationApproach;
+  reason: string;
+  /** Optional short text to inject into agent context (≤20 tokens). */
+  inject?: string;
+};
+
+// ============================================================================
+// Oscillation Report (S6: self-iteration.ts)
+// ============================================================================
+
+export type OscillationReport = {
+  oscillatingAtoms: string[];
+  shouldPause: boolean;
+  reason: string;
+};

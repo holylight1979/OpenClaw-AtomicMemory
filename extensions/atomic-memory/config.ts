@@ -41,6 +41,24 @@ export type AtomicMemoryConfig = {
     autoThreshold: number;
     dedupScore: number;
   };
+  tokenBudget: {
+    /** Prompt length threshold: short (< shortThreshold chars). */
+    shortThreshold: number;
+    /** Prompt length threshold: medium (< mediumThreshold chars). */
+    mediumThreshold: number;
+    /** Token budget for short prompts. */
+    shortBudget: number;
+    /** Token budget for medium prompts. */
+    mediumBudget: number;
+    /** Token budget for long prompts. */
+    longBudget: number;
+    /** Approximate chars per token (CJK average). */
+    charsPerToken: number;
+  };
+  actr: {
+    /** Weight of ACT-R activation in the ranking formula (0–1). */
+    weight: number;
+  };
 };
 
 // ============================================================================
@@ -89,7 +107,7 @@ export const atomicMemoryConfigSchema = {
 
     assertAllowedKeys(
       cfg,
-      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate"],
+      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate", "tokenBudget", "actr"],
       "atomic-memory config",
     );
 
@@ -112,6 +130,14 @@ export const atomicMemoryConfigSchema = {
     // writeGate sub-config
     const writeGateRaw = (cfg.writeGate ?? {}) as Record<string, unknown>;
     assertAllowedKeys(writeGateRaw, ["autoThreshold", "dedupScore"], "writeGate config");
+
+    // tokenBudget sub-config
+    const tokenBudgetRaw = (cfg.tokenBudget ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(tokenBudgetRaw, ["shortThreshold", "mediumThreshold", "shortBudget", "mediumBudget", "longBudget", "charsPerToken"], "tokenBudget config");
+
+    // actr sub-config
+    const actrRaw = (cfg.actr ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(actrRaw, ["weight"], "actr config");
 
     return {
       atomStorePath: strOrDefault(cfg.atomStorePath, DEFAULT_ATOM_STORE_PATH),
@@ -141,6 +167,17 @@ export const atomicMemoryConfigSchema = {
       writeGate: {
         autoThreshold: numOrDefault(writeGateRaw.autoThreshold, 0.50, 0, 1),
         dedupScore: numOrDefault(writeGateRaw.dedupScore, 0.80, 0, 1),
+      },
+      tokenBudget: {
+        shortThreshold: numOrDefault(tokenBudgetRaw.shortThreshold, 50, 1, 500),
+        mediumThreshold: numOrDefault(tokenBudgetRaw.mediumThreshold, 200, 50, 1000),
+        shortBudget: numOrDefault(tokenBudgetRaw.shortBudget, 1500, 500, 10000),
+        mediumBudget: numOrDefault(tokenBudgetRaw.mediumBudget, 3000, 1000, 20000),
+        longBudget: numOrDefault(tokenBudgetRaw.longBudget, 5000, 2000, 30000),
+        charsPerToken: numOrDefault(tokenBudgetRaw.charsPerToken, 3.0, 1, 10),
+      },
+      actr: {
+        weight: numOrDefault(actrRaw.weight, 0.15, 0, 1),
       },
     };
   },
