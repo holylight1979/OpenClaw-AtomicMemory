@@ -59,6 +59,24 @@ export type AtomicMemoryConfig = {
     /** Weight of ACT-R activation in the ranking formula (0–1). */
     weight: number;
   };
+  episodic: {
+    /** Generate episodic summary atoms on session end. Default true. */
+    enabled: boolean;
+    /** Minimum session duration (ms) to trigger episodic generation. Default 120000. */
+    minDurationMs: number;
+    /** Minimum turns to trigger episodic generation. Default 3. */
+    minTurns: number;
+    /** Days before episodic atoms are auto-cleaned. Default 24. */
+    ttlDays: number;
+  };
+  wisdom: {
+    /** Master switch — opt-in. Default false. */
+    enabled: boolean;
+    /** Enable situation classifier (direct/confirm/plan). Default true if wisdom enabled. */
+    situationClassifier: boolean;
+    /** Enable reflection tracking (accuracy metrics). Default true if wisdom enabled. */
+    reflectionTracking: boolean;
+  };
 };
 
 // ============================================================================
@@ -107,7 +125,7 @@ export const atomicMemoryConfigSchema = {
 
     assertAllowedKeys(
       cfg,
-      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate", "tokenBudget", "actr"],
+      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate", "tokenBudget", "actr", "episodic", "wisdom"],
       "atomic-memory config",
     );
 
@@ -138,6 +156,14 @@ export const atomicMemoryConfigSchema = {
     // actr sub-config
     const actrRaw = (cfg.actr ?? {}) as Record<string, unknown>;
     assertAllowedKeys(actrRaw, ["weight"], "actr config");
+
+    // episodic sub-config
+    const episodicRaw = (cfg.episodic ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(episodicRaw, ["enabled", "minDurationMs", "minTurns", "ttlDays"], "episodic config");
+
+    // wisdom sub-config
+    const wisdomRaw = (cfg.wisdom ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(wisdomRaw, ["enabled", "situationClassifier", "reflectionTracking"], "wisdom config");
 
     return {
       atomStorePath: strOrDefault(cfg.atomStorePath, DEFAULT_ATOM_STORE_PATH),
@@ -178,6 +204,17 @@ export const atomicMemoryConfigSchema = {
       },
       actr: {
         weight: numOrDefault(actrRaw.weight, 0.15, 0, 1),
+      },
+      episodic: {
+        enabled: boolOrDefault(episodicRaw.enabled, true),
+        minDurationMs: numOrDefault(episodicRaw.minDurationMs, 120_000, 0, 3_600_000),
+        minTurns: numOrDefault(episodicRaw.minTurns, 3, 1, 100),
+        ttlDays: numOrDefault(episodicRaw.ttlDays, 24, 1, 365),
+      },
+      wisdom: {
+        enabled: boolOrDefault(wisdomRaw.enabled, false),
+        situationClassifier: boolOrDefault(wisdomRaw.situationClassifier, true),
+        reflectionTracking: boolOrDefault(wisdomRaw.reflectionTracking, true),
       },
     };
   },

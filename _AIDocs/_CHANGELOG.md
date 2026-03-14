@@ -2,6 +2,8 @@
 
 | 日期 | 變更 | 影響文件 |
 |------|------|---------|
+| 2026-03-15 | **atomic-memory S4**: Episodic Engine — episodic-engine.ts（generateEpisodicSummary: rule-based 從 SessionState 萃取摘要; storeEpisodicAtom: MD 寫入 episodic/ 含 Type:episodic/TTL:24d; cleanExpiredEpisodic: TTL 過期自動刪除; listEpisodicSummaries: 讀取+反解析）; config.ts 新增 episodic 區塊（enabled/minDurationMs/minTurns/ttlDays）; index.ts session_end hook 整合 | Extensions.md |
+| 2026-03-15 | **atomic-memory S7**: Wisdom Engine — wisdom-engine.ts（Situation Classifier: rule-based direct/confirm/plan for bot; Reflection Metrics: firstApproachAccuracy + silenceAccuracy + blindSpot detection）; config.ts 新增 wisdom 區塊（enabled/situationClassifier/reflectionTracking, default off）; index.ts 整合 session_start preload + before_agent_start inject + session_end reflect | Extensions.md |
 | 2026-03-14 | **atomic-memory S3**: Session State + Intent + Blind-Spot — session-state.ts（SessionStateManager: Map + 2h TTL 自動清理）; intent-classifier.ts（7 種 intent, 中英文 keyword matching + category boosts）; blind-spot.ts（空結果/弱匹配偵測, inject <13 tokens）; index.ts 整合 session_start hook + before_agent_start intent/blind-spot | Extensions.md |
 | 2026-03-14 | **atomic-memory S5**: Cross-session consolidation — cross-session.ts（consolidateNewFacts: 每 fact 查 ChromaDB 找跨 session 重複，自動遞增 confirmations）; promotion.ts 加 immediatePromotionCheck（[臨]→[觀] 即時晉升，[觀]→[固] suggest only）; index.ts agent_end hook 整合 | Extensions.md |
 | 2026-03-14 | **atomic-memory S0-S2 (Wave 1)**: S0 index.ts 拆分為模組化入口 + logger/types/forget-engine/context-formatter/workspace-reader 抽出; S1 ACT-R activation scoring + 3 階段 token budget + summary fallback; S2 Ollama 3-stage resilience + write gate CJK operationality | Extensions.md |

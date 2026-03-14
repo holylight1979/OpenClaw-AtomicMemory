@@ -19,6 +19,7 @@ import { consolidateNewFacts } from "./src/cross-session.js";
 import { ensurePersonAtom } from "./src/entity-resolver.js";
 import { detectContradiction, detectForgetIntent } from "./src/forget-engine.js";
 import { detectBlindSpot } from "./src/blind-spot.js";
+import { generateEpisodicSummary, storeEpisodicAtom, cleanExpiredEpisodic } from "./src/episodic-engine.js";
 import { classifyIntent } from "./src/intent-classifier.js";
 import { createLogger, type Logger } from "./src/logger.js";
 import { OllamaClient } from "./src/ollama-client.js";
@@ -28,6 +29,13 @@ import { SessionStateManager } from "./src/session-state.js";
 import type { AtomCategory, Confidence, RecalledAtom } from "./src/types.js";
 import { ATOM_CATEGORIES, CATEGORY_LABELS } from "./src/types.js";
 import { VectorClient } from "./src/vector-client.js";
+import {
+  classifySituation,
+  getReflectionSummary,
+  loadReflectionMetrics,
+  saveReflectionMetrics,
+  updateReflection,
+} from "./src/wisdom-engine.js";
 import { isTestFact, readFactsFromWorkspace } from "./src/workspace-reader.js";
 import { atomicMemoryConfigSchema, type AtomicMemoryConfig } from "./config.js";
 
@@ -46,6 +54,8 @@ type PluginState = {
   sessionState: SessionStateManager;
   log: Logger;
   api: OpenClawPluginApi;
+  // Wisdom: pending reflection summary to inject in next before_agent_start
+  pendingReflectionSummary: string | null;
   // Pending forget state — tracks forget candidates awaiting user confirmation
   pendingForget: {
     target: string;
@@ -70,6 +80,7 @@ function registerHooks(state: PluginState): void {
   const { cfg, store, ollama, vectors, recall, capture, promotion, sessionState, log, api } = state;
   const intentLog = createLogger("intent", log as any);
   const blindSpotLog = createLogger("blind-spot", log as any);
+  const wisdomLog = createLogger("wisdom", log as any);
 
   // ──────────────────────────────────────────────────────────────────────────
   // Hook 0: Session Start — initialize session state
@@ -79,6 +90,20 @@ function registerHooks(state: PluginState): void {
     const sessionKey = ctx.sessionKey ?? ctx.sessionId;
     sessionState.getOrCreate(sessionKey);
     log.info(`session_start: initialized state for ${sessionKey}`);
+
+    // Wisdom: preload reflection summary for injection in first before_agent_start
+    if (cfg.wisdom.enabled && cfg.wisdom.reflectionTracking) {
+      try {
+        const metrics = await loadReflectionMetrics(cfg.atomStorePath);
+        const summary = getReflectionSummary(metrics);
+        if (summary) {
+          state.pendingReflectionSummary = summary;
+          wisdomLog.info(`reflection summary queued: ${summary}`);
+        }
+      } catch (err) {
+        wisdomLog.warn(`reflection load failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   });
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -159,6 +184,24 @@ function registerHooks(state: PluginState): void {
         const atomRefs = atoms.map(r => `${r.atom.category}/${r.atom.id}`);
         sessionState.recordTurn(sessionKey, intentResult.intent, atomRefs);
 
+        // ── Wisdom: Situation classifier + reflection summary ─────────────
+        let wisdomInject = "";
+        if (cfg.wisdom.enabled) {
+          // Inject queued reflection summary (once per session)
+          if (state.pendingReflectionSummary) {
+            wisdomInject += `\n${state.pendingReflectionSummary}`;
+            state.pendingReflectionSummary = null;
+          }
+          // Situation classifier
+          if (cfg.wisdom.situationClassifier) {
+            const advice = classifySituation(queryForRecall, sessState, intentResult);
+            if (advice.inject) {
+              wisdomInject += `\n${advice.inject}`;
+              wisdomLog.info(`situation: ${advice.approach} (${advice.reason})`);
+            }
+          }
+        }
+
         // ── Blind-spot detection ─────────────────────────────────────────
         const blindSpot = detectBlindSpot(atoms, queryForRecall.length);
         if (blindSpot) {
@@ -176,7 +219,7 @@ function registerHooks(state: PluginState): void {
 
         if (atoms.length === 0) {
           log.info(`recall returned 0 atoms for channel ${channelId}`);
-          const noRecallContext = [blindSpotSuffix, testCheckSuffix].filter(Boolean).join("");
+          const noRecallContext = [wisdomInject, blindSpotSuffix, testCheckSuffix].filter(Boolean).join("");
           if (noRecallContext) {
             return { prependContext: noRecallContext.trim() };
           }
@@ -191,7 +234,7 @@ function registerHooks(state: PluginState): void {
             normal: cfg.tokenBudget.mediumBudget,
             deep: cfg.tokenBudget.longBudget,
             charsPerToken: cfg.tokenBudget.charsPerToken,
-          }) + blindSpotSuffix + testCheckSuffix,
+          }) + wisdomInject + blindSpotSuffix + testCheckSuffix,
         };
       } catch (err) {
         log.warn(`recall failed: ${String(err)}`);
@@ -375,7 +418,7 @@ function registerHooks(state: PluginState): void {
   // Hook 3: Session End — Promotion check
   // ──────────────────────────────────────────────────────────────────────────
 
-  api.on("session_end", async () => {
+  api.on("session_end", async (_event, ctx) => {
     log.info("session_end fired");
     try {
       const results = await promotion.checkPromotions();
@@ -397,6 +440,50 @@ function registerHooks(state: PluginState): void {
       }
     } catch (err) {
       log.warn(`promotion check failed: ${String(err)}`);
+    }
+
+    // Wisdom: update reflection metrics
+    if (cfg.wisdom.enabled && cfg.wisdom.reflectionTracking) {
+      try {
+        const sessionKey = ctx.sessionKey ?? ctx.sessionId;
+        const sessState = sessionState.getState(sessionKey);
+        if (sessState && sessState.turns > 0) {
+          const metrics = await loadReflectionMetrics(cfg.atomStorePath);
+          const updated = updateReflection(metrics, sessState);
+          await saveReflectionMetrics(cfg.atomStorePath, updated);
+          wisdomLog.info(`reflection updated — blindSpots=${updated.blindSpots.length}, lastReflection=${updated.lastReflection}`);
+        }
+      } catch (err) {
+        wisdomLog.warn(`reflection update failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // Episodic: generate conversation summary atom
+    if (cfg.episodic.enabled) {
+      const episodicLog = createLogger("episodic", log as any);
+      try {
+        const sessionKey = ctx.sessionKey ?? ctx.sessionId;
+        const sessState = sessionState.getState(sessionKey);
+        if (sessState) {
+          const summary = generateEpisodicSummary(sessState, cfg.episodic);
+          if (summary) {
+            await storeEpisodicAtom(summary, api.resolvePath(cfg.atomStorePath), episodicLog);
+            const cleaned = await cleanExpiredEpisodic(
+              api.resolvePath(cfg.atomStorePath),
+              cfg.episodic.ttlDays,
+              episodicLog,
+            );
+            episodicLog.info(
+              `session ${sessionKey}: ${summary.turns} turns, intent=${summary.dominantIntent}, topics=${summary.topicsDiscussed.length}` +
+              (cleaned > 0 ? `, cleaned ${cleaned} expired` : ""),
+            );
+          } else {
+            episodicLog.info(`session ${sessionKey}: skipped (below threshold or pure-recall)`);
+          }
+        }
+      } catch (err) {
+        episodicLog.warn(`episodic generation failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   });
 }
@@ -1107,6 +1194,7 @@ const atomicMemoryPlugin = {
       sessionState: sessionStateMgr,
       log,
       api,
+      pendingReflectionSummary: null,
       pendingForget: null,
       testSession: {
         active: false,
