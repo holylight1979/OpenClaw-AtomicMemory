@@ -65,6 +65,60 @@
       "placeholder": "0.50",
       "help": "Quality score threshold for auto-storing facts",
       "advanced": true
+    },
+    "writeGate.dedupScore": {
+      "label": "Dedup Score Threshold",
+      "placeholder": "0.80",
+      "help": "Similarity score threshold for deduplication",
+      "advanced": true
+    },
+    "memoryIsolation": {
+      "label": "Memory Isolation",
+      "help": "Memory isolation mode: shared, user-scoped, or owner-only"
+    },
+    "tokenBudget.shortBudget": {
+      "label": "Short Prompt Token Budget",
+      "placeholder": "1500",
+      "advanced": true
+    },
+    "tokenBudget.mediumBudget": {
+      "label": "Medium Prompt Token Budget",
+      "placeholder": "3000",
+      "advanced": true
+    },
+    "tokenBudget.longBudget": {
+      "label": "Long Prompt Token Budget",
+      "placeholder": "5000",
+      "advanced": true
+    },
+    "actr.weight": {
+      "label": "ACT-R Weight",
+      "placeholder": "0.15",
+      "help": "Weight of ACT-R activation in ranking (0–1)",
+      "advanced": true
+    },
+    "episodic.enabled": {
+      "label": "Episodic Summaries",
+      "help": "Generate session summary atoms on session end"
+    },
+    "episodic.ttlDays": {
+      "label": "Episodic TTL (days)",
+      "placeholder": "24",
+      "advanced": true
+    },
+    "wisdom.enabled": {
+      "label": "Wisdom Engine",
+      "help": "Enable situation classification and reflection tracking"
+    },
+    "selfIteration.enabled": {
+      "label": "Self-Iteration",
+      "help": "Enable periodic review and oscillation detection"
+    },
+    "selfIteration.reviewInterval": {
+      "label": "Review Interval",
+      "placeholder": "25",
+      "help": "Number of episodic summaries between periodic reviews",
+      "advanced": true
     }
   },
   "configSchema": {
@@ -114,6 +168,58 @@
         "properties": {
           "autoThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
           "dedupScore": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "memoryIsolation": {
+        "type": "string",
+        "enum": ["shared", "user-scoped", "owner-only"]
+      },
+      "tokenBudget": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "shortThreshold": { "type": "number", "minimum": 1, "maximum": 500 },
+          "mediumThreshold": { "type": "number", "minimum": 50, "maximum": 1000 },
+          "shortBudget": { "type": "number", "minimum": 500, "maximum": 10000 },
+          "mediumBudget": { "type": "number", "minimum": 1000, "maximum": 20000 },
+          "longBudget": { "type": "number", "minimum": 2000, "maximum": 30000 },
+          "charsPerToken": { "type": "number", "minimum": 1, "maximum": 10 }
+        }
+      },
+      "actr": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "weight": { "type": "number", "minimum": 0, "maximum": 1 }
+        }
+      },
+      "episodic": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "minDurationMs": { "type": "number", "minimum": 0, "maximum": 3600000 },
+          "minTurns": { "type": "number", "minimum": 1, "maximum": 100 },
+          "ttlDays": { "type": "number", "minimum": 1, "maximum": 365 }
+        }
+      },
+      "wisdom": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "situationClassifier": { "type": "boolean" },
+          "reflectionTracking": { "type": "boolean" }
+        }
+      },
+      "selfIteration": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "oscillationWindow": { "type": "number", "minimum": 1, "maximum": 20 },
+          "oscillationThreshold": { "type": "number", "minimum": 1, "maximum": 10 },
+          "reviewInterval": { "type": "number", "minimum": 1, "maximum": 200 }
         }
       }
     }
