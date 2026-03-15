@@ -87,6 +87,20 @@ export type AtomicMemoryConfig = {
     /** Episodic count between periodic reviews. Default 25. */
     reviewInterval: number;
   };
+  permission: {
+    /** Display name for the owner (injected into bot self-awareness prompt). */
+    ownerName: string;
+    /** Require owner for atom_store/atom_forget tools. Default true. */
+    toolWriteRequiresOwner: boolean;
+    /** Inject self-awareness prompt (who owns me, permission boundaries). Default true. */
+    botSelfAwareness: boolean;
+  };
+  crossPlatform: {
+    /** Enable cross-platform recall (query across all channels for person/info-request). Default true. */
+    enabled: boolean;
+    /** Enable automatic person atom merging when identityLinks match. Default true. */
+    autoMerge: boolean;
+  };
 };
 
 // ============================================================================
@@ -135,7 +149,7 @@ export const atomicMemoryConfigSchema = {
 
     assertAllowedKeys(
       cfg,
-      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate", "tokenBudget", "actr", "episodic", "wisdom", "selfIteration"],
+      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate", "tokenBudget", "actr", "episodic", "wisdom", "selfIteration", "permission", "crossPlatform"],
       "atomic-memory config",
     );
 
@@ -178,6 +192,14 @@ export const atomicMemoryConfigSchema = {
     // selfIteration sub-config
     const selfIterationRaw = (cfg.selfIteration ?? {}) as Record<string, unknown>;
     assertAllowedKeys(selfIterationRaw, ["enabled", "oscillationWindow", "oscillationThreshold", "reviewInterval"], "selfIteration config");
+
+    // permission sub-config
+    const permissionRaw = (cfg.permission ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(permissionRaw, ["ownerName", "toolWriteRequiresOwner", "botSelfAwareness"], "permission config");
+
+    // crossPlatform sub-config
+    const crossPlatformRaw = (cfg.crossPlatform ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(crossPlatformRaw, ["enabled", "autoMerge"], "crossPlatform config");
 
     return {
       atomStorePath: strOrDefault(cfg.atomStorePath, DEFAULT_ATOM_STORE_PATH),
@@ -235,6 +257,15 @@ export const atomicMemoryConfigSchema = {
         oscillationWindow: numOrDefault(selfIterationRaw.oscillationWindow, 3, 1, 20),
         oscillationThreshold: numOrDefault(selfIterationRaw.oscillationThreshold, 2, 1, 10),
         reviewInterval: numOrDefault(selfIterationRaw.reviewInterval, 25, 1, 200),
+      },
+      permission: {
+        ownerName: strOrDefault(permissionRaw.ownerName, ""),
+        toolWriteRequiresOwner: boolOrDefault(permissionRaw.toolWriteRequiresOwner, true),
+        botSelfAwareness: boolOrDefault(permissionRaw.botSelfAwareness, true),
+      },
+      crossPlatform: {
+        enabled: boolOrDefault(crossPlatformRaw.enabled, true),
+        autoMerge: boolOrDefault(crossPlatformRaw.autoMerge, true),
       },
     };
   },
@@ -304,6 +335,19 @@ export const atomicMemoryConfigSchema = {
       placeholder: "0.50",
       help: "Quality score threshold for auto-storing facts",
       advanced: true,
+    },
+    "permission.ownerName": {
+      label: "Owner Name",
+      placeholder: "",
+      help: "Display name for the owner (used in bot self-awareness prompt)",
+    },
+    "permission.toolWriteRequiresOwner": {
+      label: "Tool Write Requires Owner",
+      help: "Only owner can use atom_store/atom_forget tools",
+    },
+    "permission.botSelfAwareness": {
+      label: "Bot Self-Awareness",
+      help: "Inject permission awareness into bot system prompt",
     },
   },
 };

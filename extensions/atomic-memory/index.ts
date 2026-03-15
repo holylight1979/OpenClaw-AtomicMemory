@@ -16,7 +16,7 @@ import { AtomStore } from "./src/atom-store.js";
 import { CaptureEngine } from "./src/capture-engine.js";
 import { formatAtomicMemoriesContext } from "./src/context-formatter.js";
 import { consolidateNewFacts } from "./src/cross-session.js";
-import { ensurePersonAtom } from "./src/entity-resolver.js";
+import { ensurePersonAtom, linkPersonAcrossPlatforms } from "./src/entity-resolver.js";
 import { detectContradiction, detectForgetIntent } from "./src/forget-engine.js";
 import { detectBlindSpot } from "./src/blind-spot.js";
 import { generateEpisodicSummary, storeEpisodicAtom, cleanExpiredEpisodic, listEpisodicSummaries } from "./src/episodic-engine.js";
@@ -142,6 +142,22 @@ function registerHooks(state: PluginState): void {
   });
 
   // ──────────────────────────────────────────────────────────────────────────
+  // Hook 0.5: Bot Self-Awareness (before_prompt_build — cached in system prompt)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  if (cfg.permission.botSelfAwareness) {
+    api.on("before_prompt_build", (_event, _ctx) => {
+      const ownerLabel = cfg.permission.ownerName || "the configured owner";
+      return {
+        appendSystemContext:
+          `[Permission] Your manager is ${ownerLabel}. ` +
+          "Only the manager can modify your settings and memories. " +
+          "Politely decline setting/memory change requests from others.",
+      };
+    });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
   // Hook 1: Auto-Recall (before_agent_start)
   // ──────────────────────────────────────────────────────────────────────────
 
@@ -200,6 +216,8 @@ function registerHooks(state: PluginState): void {
         if (testResult) return testResult;
 
         // ── Normal recall flow ───────────────────────────────────────────
+        const identityLinks = ctx.identityLinks;
+        const crossPlatformEnabled = cfg.crossPlatform.enabled;
         const atoms = await recall.search(queryForRecall, {
           topK: cfg.recall.topK,
           minScore: cfg.recall.minScore,
@@ -209,6 +227,8 @@ function registerHooks(state: PluginState): void {
           isolationMode: cfg.memoryIsolation,
           atomStorePath: cfg.atomStorePath,
           actrWeight: cfg.actr.weight,
+          identityLinks: crossPlatformEnabled ? identityLinks : undefined,
+          crossPlatformRecall: crossPlatformEnabled && !!identityLinks,
         });
 
         // ── Session state: record turn ─────────────────────────────────
@@ -437,7 +457,8 @@ function registerHooks(state: PluginState): void {
         // Auto-create/update person atom
         if (captureSenderId) {
           try {
-            const personAtom = await ensurePersonAtom(captureSenderId, channelId, captureSenderName, store);
+            const captureIdentityLinks = cfg.crossPlatform.enabled ? ctx.identityLinks : undefined;
+            const personAtom = await ensurePersonAtom(captureSenderId, channelId, captureSenderName, store, captureIdentityLinks, cfg.crossPlatform.autoMerge);
             log.info(`ensured person atom: person/${personAtom.id} for sender ${captureSenderId}`);
           } catch (err) {
             log.warn(`ensurePersonAtom failed: ${String(err)}`);
@@ -841,6 +862,14 @@ function registerTools(state: PluginState): void {
         ),
       }),
       async execute(_toolCallId: string, params: unknown) {
+        // Permission check: only owner can store memories
+        if (cfg.permission.toolWriteRequiresOwner && toolCtx.senderIsOwner === false) {
+          return {
+            content: [{ type: "text", text: "Permission denied: only the owner can store memories." }],
+            details: { error: "permission_denied", action: "store" },
+          };
+        }
+
         const {
           text,
           category,
@@ -914,6 +943,14 @@ function registerTools(state: PluginState): void {
         ),
       }),
       async execute(_toolCallId: string, params: unknown) {
+        // Permission check: only owner can forget memories
+        if (cfg.permission.toolWriteRequiresOwner && toolCtx.senderIsOwner === false) {
+          return {
+            content: [{ type: "text", text: "Permission denied: only the owner can delete memories." }],
+            details: { error: "permission_denied", action: "forget" },
+          };
+        }
+
         const { query, atomRef, archive = true } = params as {
           query?: string;
           atomRef?: string;
@@ -1028,6 +1065,59 @@ function registerTools(state: PluginState): void {
       },
     })) as OpenClawPluginToolFactory,
     { name: "atom_forget" },
+  );
+
+  // atom_link — cross-platform person identity linking
+  api.registerTool(
+    ((toolCtx: OpenClawPluginToolContext) => ({
+      name: "atom_link",
+      label: "Atom Link",
+      description:
+        "Link a person atom to another platform identity. Use when the user says someone's account on another platform (e.g. 小明的Discord帳號是xiaoming#1234, 他的LINE是XXX).",
+      parameters: Type.Object({
+        personRef: Type.String({ description: "Person atom ref: person/id (e.g. person/小明)" }),
+        channel: Type.String({ description: "Target platform channel (e.g. discord, telegram, line)" }),
+        senderId: Type.String({ description: "Platform-specific user ID on the target channel" }),
+        displayName: Type.Optional(Type.String({ description: "Display name on the target platform" })),
+      }),
+      async execute(_toolCallId: string, params: unknown) {
+        if (cfg.permission.toolWriteRequiresOwner && toolCtx.senderIsOwner === false) {
+          return {
+            content: [{ type: "text", text: "Permission denied: only the owner can link identities." }],
+            details: { error: "permission_denied", action: "link" },
+          };
+        }
+
+        const { personRef, channel, senderId, displayName } = params as {
+          personRef: string;
+          channel: string;
+          senderId: string;
+          displayName?: string;
+        };
+
+        const atomId = personRef.startsWith("person/") ? personRef.slice(7) : personRef;
+        const updated = await linkPersonAcrossPlatforms(atomId, channel, senderId, store, displayName);
+        if (!updated) {
+          return {
+            content: [{ type: "text", text: `Person atom not found: person/${atomId}` }],
+            details: { error: "not_found" },
+          };
+        }
+
+        // Re-index for vector search
+        const chunks = chunkAtom(updated);
+        if (chunks.length > 0) {
+          await vectors.deleteAtom(`person/${atomId}`);
+          await vectors.index(chunks);
+        }
+
+        return {
+          content: [{ type: "text", text: `Linked person/${atomId} to ${channel}:${senderId}${displayName ? ` (${displayName})` : ""}` }],
+          details: { action: "linked", ref: `person/${atomId}`, target: `${channel}:${senderId}` },
+        };
+      },
+    })) as OpenClawPluginToolFactory,
+    { name: "atom_link" },
   );
 }
 
