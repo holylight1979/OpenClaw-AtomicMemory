@@ -157,6 +157,7 @@ export async function ensurePersonAtom(
     tags: ["auto-created"],
     related: [],
     sources,
+    scope: "user",
     knowledge: `- ${channel} 使用者: ${displayName ?? senderId}`,
     actions: "",
     evolutionLog: [`${today}: 自動建立 (${channel})`],

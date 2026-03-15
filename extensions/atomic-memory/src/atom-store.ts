@@ -10,7 +10,7 @@ import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { parseAtom } from "./atom-parser.js";
 import { serializeAtom, serializeMemoryIndex } from "./atom-writer.js";
-import { ATOM_CATEGORIES, type Atom, type AtomCategory, type Confidence } from "./types.js";
+import { ATOM_CATEGORIES, type Atom, type AtomCategory, type AtomScope, type Confidence } from "./types.js";
 import { resolveEntity } from "./entity-resolver.js";
 
 export class AtomStore {
@@ -206,7 +206,7 @@ export class AtomStore {
   async findOrCreate(
     category: AtomCategory,
     fact: { text: string; category: AtomCategory; confidence: Confidence },
-    options?: { channel?: string; senderId?: string },
+    options?: { channel?: string; senderId?: string; scope?: AtomScope },
   ): Promise<Atom> {
     // Try to find existing atom by scanning triggers
     const existing = await this.list(category);
@@ -244,6 +244,7 @@ export class AtomStore {
       sources: options?.channel
         ? [{ channel: options.channel, senderId: options.senderId }]
         : [],
+      scope: options?.scope ?? "global",
       knowledge: `- ${fact.text}`,
       actions: "",
       evolutionLog: [`${today}: 建立`],

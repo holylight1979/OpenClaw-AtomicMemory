@@ -35,6 +35,14 @@ export const CONFIDENCE_WEIGHT: Record<Confidence, number> = {
 };
 
 // ============================================================================
+// Atom Scope (G1-B: cross-group command routing)
+// ============================================================================
+
+/** Per-atom visibility scope — determines cross-group propagation behavior. */
+export const ATOM_SCOPES = ["global", "user", "group"] as const;
+export type AtomScope = (typeof ATOM_SCOPES)[number];
+
+// ============================================================================
 // Atom
 // ============================================================================
 
@@ -63,6 +71,13 @@ export type Atom = {
   supersedes?: string;
   /** Where the knowledge came from. */
   sources: AtomSource[];
+  /**
+   * Visibility scope (G1-B):
+   * - 'global': visible to everyone (default, follows memoryIsolation setting)
+   * - 'user': visible only to the originating sender across all groups
+   * - 'group': visible only in the originating channel/group
+   */
+  scope: AtomScope;
   /** Markdown content under ## 知識 */
   knowledge: string;
   /** Markdown content under ## 行動 */
@@ -181,6 +196,7 @@ export type DecayResult = {
 
 export type IntentType =
   | "memory-query"
+  | "memory-store"
   | "info-request"
   | "task"
   | "social"
@@ -199,6 +215,8 @@ export type SessionState = {
   recalledAtoms: string[];
   /** Atom refs created or updated during this session. */
   modifiedAtoms: string[];
+  /** G1-B: Last classified intent (for scope routing in capture flow). */
+  lastIntent?: IntentType;
   channel?: string;
   senderId?: string;
 };

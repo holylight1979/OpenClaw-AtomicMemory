@@ -17,7 +17,7 @@ export function serializeAtom(atom: Atom): string {
   lines.push("");
 
   // Metadata block
-  lines.push(`- Scope: project`);
+  lines.push(`- Scope: ${atom.scope}`);
   lines.push(`- Confidence: ${atom.confidence}`);
   lines.push(`- Trigger: ${atom.triggers.join(", ")}`);
   lines.push(`- Last-used: ${atom.lastUsed}`);

@@ -5,7 +5,7 @@
  * Ported from indexer.py's parse_and_chunk() logic.
  */
 
-import type { Atom, AtomCategory, AtomChunk, AtomSource, Confidence } from "./types.js";
+import type { Atom, AtomCategory, AtomChunk, AtomScope, AtomSource, Confidence } from "./types.js";
 
 // ============================================================================
 // Metadata regex patterns (ported from indexer.py META_RE)
@@ -113,6 +113,10 @@ export function parseAtom(content: string, id: string, category: AtomCategory): 
   const supersedesMatch = content.match(META_PATTERNS.supersedes);
   const supersedes = supersedesMatch?.[1]?.trim();
 
+  const scopeMatch = content.match(META_PATTERNS.scope);
+  const scopeRaw = scopeMatch?.[1]?.trim().toLowerCase();
+  const scope: AtomScope = (scopeRaw === "user" || scopeRaw === "group") ? scopeRaw : "global";
+
   const sources = parseSources(content);
 
   // Extract sections
@@ -141,6 +145,7 @@ export function parseAtom(content: string, id: string, category: AtomCategory): 
     related,
     supersedes: supersedes || undefined,
     sources,
+    scope,
     knowledge,
     actions,
     evolutionLog,

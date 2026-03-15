@@ -7,7 +7,7 @@
 import type { AtomStore } from "./atom-store.js";
 import type { OllamaClient } from "./ollama-client.js";
 import type { VectorClient } from "./vector-client.js";
-import type { Atom, AtomCategory, RecalledAtom, VectorResult } from "./types.js";
+import type { Atom, AtomCategory, AtomScope, RecalledAtom, VectorResult } from "./types.js";
 import { CONFIDENCE_WEIGHT } from "./types.js";
 import { resolveEntity, resolveLinkedPeerIds, type IdentityLinks } from "./entity-resolver.js";
 import { computeActivation, recordBatchAccess } from "./actr-scoring.js";
@@ -31,6 +31,8 @@ export type RecallOptions = {
   identityLinks?: IdentityLinks;
   /** Enable cross-platform recall (bypass source isolation for linked identities). */
   crossPlatformRecall?: boolean;
+  /** G1-B: Which atom scopes to include in results. If unset, all scopes pass. */
+  recallScopes?: AtomScope[];
 };
 
 export class RecallEngine {
@@ -111,14 +113,46 @@ export class RecallEngine {
       const atom = await this.store.get(category, id);
       if (!atom) continue;
 
-      // User-scoped isolation: only return atoms related to this sender (identity-aware)
-      if (options.isolationMode === "user-scoped" && options.senderId) {
+      // G1-B: Per-atom scope filtering
+      // 'user' scope → only visible to matching senderId (across all groups)
+      // 'group' scope → only visible in matching channel
+      // 'global' scope → follows memoryIsolation setting (handled below)
+      if (atom.scope === "user" && options.senderId) {
+        const hasSenderSource = atom.sources.some(
+          (s) => s.senderId === options.senderId,
+        );
+        let hasLinkedSource = false;
+        if (!hasSenderSource && options.identityLinks && options.channel) {
+          const linked = resolveLinkedPeerIds(options.senderId, options.channel, options.identityLinks);
+          hasLinkedSource = linked.length > 0 && atom.sources.some((s) =>
+            linked.some((l) => s.channel === l.channel && s.senderId === l.senderId),
+          );
+        }
+        if (!hasSenderSource && !hasLinkedSource) continue;
+      } else if (atom.scope === "user" && !options.senderId) {
+        // No sender info — can't verify ownership, skip user-scoped atoms
+        continue;
+      } else if (atom.scope === "group") {
+        // Group-scoped: only visible if current channel matches a source channel
+        if (!options.channel) continue;
+        const hasChannelSource = atom.sources.some(
+          (s) => s.channel === options.channel,
+        );
+        if (!hasChannelSource) continue;
+      }
+
+      // G1-B: Filter by requested recall scopes (intent-aware routing)
+      if (options.recallScopes && !options.recallScopes.includes(atom.scope)) {
+        continue;
+      }
+
+      // Legacy user-scoped isolation for 'global' atoms (backwards-compatible)
+      if (atom.scope === "global" && options.isolationMode === "user-scoped" && options.senderId) {
         const isSharedKnowledge = atom.sources.length === 0;
         if (!isSharedKnowledge) {
           const hasSenderSource = atom.sources.some(
             (s) => s.senderId === options.senderId,
           );
-          // Identity-aware: also match linked peer IDs from identityLinks
           let hasLinkedSource = false;
           if (!hasSenderSource && options.identityLinks && options.channel) {
             const linked = resolveLinkedPeerIds(options.senderId, options.channel, options.identityLinks);

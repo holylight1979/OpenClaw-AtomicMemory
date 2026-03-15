@@ -119,6 +119,38 @@
       "placeholder": "25",
       "help": "Number of episodic summaries between periodic reviews",
       "advanced": true
+    },
+    "permission.botName": {
+      "label": "Bot Name",
+      "placeholder": "",
+      "help": "Bot's display name for self-awareness (e.g. '小助手')"
+    },
+    "permission.ownerName": {
+      "label": "Owner Name",
+      "placeholder": "",
+      "help": "Display name for the owner (used in bot self-awareness prompt)"
+    },
+    "permission.adminIds": {
+      "label": "Admin IDs",
+      "help": "Platform user IDs with admin privileges",
+      "advanced": true
+    },
+    "permission.toolWriteRequiresOwner": {
+      "label": "Tool Write Requires Owner",
+      "help": "Only owner/admin can use atom_store/atom_forget tools"
+    },
+    "permission.botSelfAwareness": {
+      "label": "Bot Self-Awareness",
+      "help": "Inject permission awareness into bot system prompt"
+    },
+    "crossPlatform.enabled": {
+      "label": "Cross-Platform Recall",
+      "help": "Search across all channels for person/info-request"
+    },
+    "crossPlatform.autoMerge": {
+      "label": "Auto-Merge Persons",
+      "help": "Automatically merge person atoms when identityLinks match",
+      "advanced": true
     }
   },
   "configSchema": {
@@ -220,6 +252,25 @@
           "oscillationWindow": { "type": "number", "minimum": 1, "maximum": 20 },
           "oscillationThreshold": { "type": "number", "minimum": 1, "maximum": 10 },
           "reviewInterval": { "type": "number", "minimum": 1, "maximum": 200 }
+        }
+      },
+      "permission": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "botName": { "type": "string" },
+          "ownerName": { "type": "string" },
+          "adminIds": { "type": "array", "items": { "type": "string" } },
+          "toolWriteRequiresOwner": { "type": "boolean" },
+          "botSelfAwareness": { "type": "boolean" }
+        }
+      },
+      "crossPlatform": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "autoMerge": { "type": "boolean" }
         }
       }
     }

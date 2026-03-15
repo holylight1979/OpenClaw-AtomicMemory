@@ -12,6 +12,12 @@ import type { IntentType } from "./types.js";
 // ============================================================================
 
 const INTENT_PATTERNS: Record<IntentType, string[]> = {
+  "memory-store": [
+    "記住", "以後都", "幫我記", "要記得", "記下來", "別忘了",
+    "remember this", "keep in mind", "note that", "store this",
+    "我的名字是", "我叫", "我住在", "我喜歡", "我討厭", "我偏好",
+    "my name is", "i live in", "i like", "i prefer",
+  ],
   "memory-query": [
     "記得", "忘記", "知道", "之前", "上次", "有沒有記", "記憶",
     "remember", "forget", "recall", "memory", "知不知道",
@@ -49,6 +55,7 @@ const INTENT_PATTERNS: Record<IntentType, string[]> = {
 // ============================================================================
 
 const INTENT_BOOSTS: Record<IntentType, Record<string, number>> = {
+  "memory-store": { person: 0.10, topic: 0.05 },
   "memory-query": { person: 0.15, topic: 0.10, event: 0.10 },
   "info-request": { topic: 0.10, thing: 0.10 },
   task: { topic: 0.05, thing: 0.05 },

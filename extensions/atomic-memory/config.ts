@@ -88,9 +88,13 @@ export type AtomicMemoryConfig = {
     reviewInterval: number;
   };
   permission: {
+    /** Bot's display name for self-awareness (e.g. "小助手"). */
+    botName: string;
     /** Display name for the owner (injected into bot self-awareness prompt). */
     ownerName: string;
-    /** Require owner for atom_store/atom_forget tools. Default true. */
+    /** Platform user IDs granted admin privileges (can write/delete memories). */
+    adminIds: string[];
+    /** Require owner/admin for atom_store/atom_forget tools. Default true. */
     toolWriteRequiresOwner: boolean;
     /** Inject self-awareness prompt (who owns me, permission boundaries). Default true. */
     botSelfAwareness: boolean;
@@ -195,7 +199,7 @@ export const atomicMemoryConfigSchema = {
 
     // permission sub-config
     const permissionRaw = (cfg.permission ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(permissionRaw, ["ownerName", "toolWriteRequiresOwner", "botSelfAwareness"], "permission config");
+    assertAllowedKeys(permissionRaw, ["botName", "ownerName", "adminIds", "toolWriteRequiresOwner", "botSelfAwareness"], "permission config");
 
     // crossPlatform sub-config
     const crossPlatformRaw = (cfg.crossPlatform ?? {}) as Record<string, unknown>;
@@ -259,7 +263,11 @@ export const atomicMemoryConfigSchema = {
         reviewInterval: numOrDefault(selfIterationRaw.reviewInterval, 25, 1, 200),
       },
       permission: {
+        botName: strOrDefault(permissionRaw.botName, ""),
         ownerName: strOrDefault(permissionRaw.ownerName, ""),
+        adminIds: Array.isArray(permissionRaw.adminIds)
+          ? (permissionRaw.adminIds as unknown[]).filter((v): v is string => typeof v === "string")
+          : [],
         toolWriteRequiresOwner: boolOrDefault(permissionRaw.toolWriteRequiresOwner, true),
         botSelfAwareness: boolOrDefault(permissionRaw.botSelfAwareness, true),
       },
@@ -336,10 +344,20 @@ export const atomicMemoryConfigSchema = {
       help: "Quality score threshold for auto-storing facts",
       advanced: true,
     },
+    "permission.botName": {
+      label: "Bot Name",
+      placeholder: "",
+      help: "Bot's display name for self-awareness (e.g. '小助手')",
+    },
     "permission.ownerName": {
       label: "Owner Name",
       placeholder: "",
       help: "Display name for the owner (used in bot self-awareness prompt)",
+    },
+    "permission.adminIds": {
+      label: "Admin IDs",
+      help: "Platform user IDs with admin privileges (can manage memories)",
+      advanced: true,
     },
     "permission.toolWriteRequiresOwner": {
       label: "Tool Write Requires Owner",

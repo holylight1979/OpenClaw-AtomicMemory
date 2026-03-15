@@ -69,6 +69,7 @@ export class SessionStateManager {
     state.turns++;
     state.lastActivity = Date.now();
     state.intents[intent] = (state.intents[intent] ?? 0) + 1;
+    state.lastIntent = intent;
 
     for (const ref of recalledAtomRefs) {
       if (!state.recalledAtoms.includes(ref)) {

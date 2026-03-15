@@ -21,6 +21,7 @@ import { detectContradiction, detectForgetIntent } from "./src/forget-engine.js"
 import { detectBlindSpot } from "./src/blind-spot.js";
 import { generateEpisodicSummary, storeEpisodicAtom, cleanExpiredEpisodic, listEpisodicSummaries } from "./src/episodic-engine.js";
 import { classifyIntent } from "./src/intent-classifier.js";
+import { classifyScope, getRecallScopes } from "./src/scope-classifier.js";
 import { createLogger, type Logger } from "./src/logger.js";
 import { OllamaClient } from "./src/ollama-client.js";
 import { PromotionEngine } from "./src/promotion.js";
@@ -44,6 +45,17 @@ import {
   saveIterationState,
 } from "./src/self-iteration.js";
 
+import {
+  resolvePermissionLevel,
+  hasWriteAccess,
+  detectSettingCommand,
+  buildSelfAwarenessPrompt,
+  buildCapabilityContext,
+  buildRejectionContext,
+  loadRuntimeAdmins,
+  addRuntimeAdmin,
+  removeRuntimeAdmin,
+} from "./src/permission-guard.js";
 import { isTestFact, readFactsFromWorkspace } from "./src/workspace-reader.js";
 import { atomicMemoryConfigSchema, type AtomicMemoryConfig } from "./config.js";
 
@@ -78,6 +90,8 @@ type PluginState = {
     currentTurn: number;
     askedCleanup: boolean;
   };
+  // Runtime admin IDs (loaded from persistent JSON, merged with config.permission.adminIds)
+  runtimeAdminIds: string[];
 };
 
 // ============================================================================
@@ -147,12 +161,8 @@ function registerHooks(state: PluginState): void {
 
   if (cfg.permission.botSelfAwareness) {
     api.on("before_prompt_build", (_event, _ctx) => {
-      const ownerLabel = cfg.permission.ownerName || "the configured owner";
       return {
-        appendSystemContext:
-          `[Permission] Your manager is ${ownerLabel}. ` +
-          "Only the manager can modify your settings and memories. " +
-          "Politely decline setting/memory change requests from others.",
+        appendSystemContext: buildSelfAwarenessPrompt(cfg),
       };
     });
   }
@@ -198,12 +208,29 @@ function registerHooks(state: PluginState): void {
         const intentResult = classifyIntent(queryForRecall);
         intentLog.info(`${intentResult.intent} (confidence=${intentResult.confidence.toFixed(2)})`);
 
+        // ── Permission: resolve sender level ─────────────────────────────
+        const senderLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds);
+
+        // ── Command interception: setting commands from non-authorized ───
+        const settingKw = detectSettingCommand(queryForRecall);
+        if ((intentResult.intent === "command" || settingKw) && settingKw && !hasWriteAccess(senderLevel)) {
+          log.info(`BLOCKED setting command from ${senderId ?? "unknown"} (level=${senderLevel}, keyword="${settingKw}")`);
+          return { prependContext: buildRejectionContext(settingKw, senderName) };
+        }
+
+        // ── Self-awareness: inject capability context when asked ─────────
+        let capabilityCtx = "";
+        if (/(?:你是誰|who\s*are\s*you|誰是你的?(?:主人|管理者)|who(?:'s| is) your (?:owner|manager)|我能做什麼|what can i do|我的權限)/i.test(queryForRecall)) {
+          capabilityCtx = "\n" + buildCapabilityContext(senderLevel);
+          log.info(`self-awareness query, sender level=${senderLevel}`);
+        }
+
         // ── Forget flow ──────────────────────────────────────────────────
         const forgetResult = handleForgetFlow(state, queryForRecall);
         if (forgetResult !== undefined) {
           if (forgetResult === null) {
             // Async forget — need to await
-            const asyncResult = await handleForgetFlowAsync(state, queryForRecall);
+            const asyncResult = await handleForgetFlowAsync(state, queryForRecall, senderId, senderIsOwner);
             if (asyncResult) return asyncResult;
           } else {
             return forgetResult;
@@ -218,17 +245,40 @@ function registerHooks(state: PluginState): void {
         // ── Normal recall flow ───────────────────────────────────────────
         const identityLinks = ctx.identityLinks;
         const crossPlatformEnabled = cfg.crossPlatform.enabled;
+
+        // Preload person atoms once for both auto-detect and merge suggestion
+        const personAtomsForCross = crossPlatformEnabled ? await store.list("person") : [];
+
+        // Auto-detect cross-platform: when intent is info-request and query
+        // mentions a known person name, search across all platforms
+        let autoCrossPlatform = false;
+        if (crossPlatformEnabled && intentResult.intent === "info-request") {
+          const queryLower = queryForRecall.toLowerCase();
+          for (const pa of personAtomsForCross) {
+            const nameMatch = pa.triggers.some(t => {
+              const tl = t.toLowerCase();
+              return !tl.includes(":") && tl.length >= 2 && queryLower.includes(tl);
+            });
+            if (nameMatch) {
+              autoCrossPlatform = true;
+              log.info(`auto-crossPlatform: query mentions person "${pa.id}", enabling cross-platform recall`);
+              break;
+            }
+          }
+        }
+
         const atoms = await recall.search(queryForRecall, {
           topK: cfg.recall.topK,
           minScore: cfg.recall.minScore,
           senderId: senderId,
           channel: channelId,
           displayName: senderName,
-          isolationMode: cfg.memoryIsolation,
+          isolationMode: autoCrossPlatform ? "shared" : cfg.memoryIsolation,
           atomStorePath: cfg.atomStorePath,
           actrWeight: cfg.actr.weight,
           identityLinks: crossPlatformEnabled ? identityLinks : undefined,
-          crossPlatformRecall: crossPlatformEnabled && !!identityLinks,
+          crossPlatformRecall: autoCrossPlatform || (crossPlatformEnabled && !!identityLinks),
+          recallScopes: getRecallScopes(intentResult.intent),
         });
 
         // ── Session state: record turn ─────────────────────────────────
@@ -263,6 +313,39 @@ function registerHooks(state: PluginState): void {
           blindSpotLog.info(blindSpot);
         }
 
+        // ── Entity merge suggestion ────────────────────────────────────
+        // Detect possible cross-platform same person (name similarity)
+        let mergeSuffix = "";
+        if (crossPlatformEnabled && personAtomsForCross.length >= 2) {
+          const mergeCandidates: Array<{ a: string; b: string; nameA: string; nameB: string }> = [];
+          for (let i = 0; i < personAtomsForCross.length; i++) {
+            for (let j = i + 1; j < personAtomsForCross.length; j++) {
+              const a = personAtomsForCross[i], b = personAtomsForCross[j];
+              // Only suggest merge for atoms on different platforms
+              const aChannels = new Set(a.sources.map(s => s.channel));
+              const bChannels = new Set(b.sources.map(s => s.channel));
+              const shareChannel = [...aChannels].some(c => bChannels.has(c));
+              if (shareChannel) continue;
+              // Check name similarity
+              const sim = nameSimilarity(a.title, b.title);
+              if (sim >= 0.7) {
+                mergeCandidates.push({
+                  a: `person/${a.id}`,
+                  b: `person/${b.id}`,
+                  nameA: `${[...aChannels].join("/")}:${a.title}`,
+                  nameB: `${[...bChannels].join("/")}:${b.title}`,
+                });
+              }
+            }
+          }
+          if (mergeCandidates.length > 0 && mergeCandidates.length <= 3) {
+            const lines = mergeCandidates.map(c =>
+              `- ${c.nameA} ↔ ${c.nameB}`,
+            ).join("\n");
+            mergeSuffix = `\n\n<atomic-memory-action action="merge-suggestion">\nPossible cross-platform same person detected:\n${lines}\nWhen relevant in conversation, naturally ask the user to confirm if they are the same person. If confirmed, use atom_link to merge.\n</atomic-memory-action>`;
+          }
+        }
+
         // Test cleanup suffix
         const testCount = store.countTestAtoms();
         const testCheckSuffix = testCount > 0 && !state.testSession.active
@@ -274,7 +357,7 @@ function registerHooks(state: PluginState): void {
 
         if (atoms.length === 0) {
           log.info(`recall returned 0 atoms for channel ${channelId}`);
-          const noRecallContext = [wisdomInject, blindSpotSuffix, testCheckSuffix].filter(Boolean).join("");
+          const noRecallContext = [wisdomInject, blindSpotSuffix, capabilityCtx, mergeSuffix, testCheckSuffix].filter(Boolean).join("");
           if (noRecallContext) {
             return { prependContext: noRecallContext.trim() };
           }
@@ -289,7 +372,7 @@ function registerHooks(state: PluginState): void {
             normal: cfg.tokenBudget.mediumBudget,
             deep: cfg.tokenBudget.longBudget,
             charsPerToken: cfg.tokenBudget.charsPerToken,
-          }) + wisdomInject + blindSpotSuffix + testCheckSuffix,
+          }) + wisdomInject + blindSpotSuffix + capabilityCtx + mergeSuffix + testCheckSuffix,
         };
       } catch (err) {
         log.warn(`recall failed: ${String(err)}`);
@@ -328,6 +411,11 @@ function registerHooks(state: PluginState): void {
 
         log.info(`${facts.length} facts from workspace/fallback (channel: ${channelId})`);
         if (facts.length === 0) return;
+
+        // G1-B: Get last intent from session state for scope routing
+        const captureSessionKey = ctx.sessionKey ?? `${channelId}-${captureSenderId ?? "anon"}`;
+        const captureSessState = sessionState.getState(captureSessionKey);
+        const lastIntent = captureSessState?.lastIntent ?? "general";
 
         let stored = 0;
         let skippedGate = 0;
@@ -378,9 +466,11 @@ function registerHooks(state: PluginState): void {
               await store.moveToDistant(existingAtom.category, existingAtom.id);
               await vectors.deleteAtom(oldRef);
 
+              const factScope = classifyScope(lastIntent, fact.text);
               const newAtom = await store.findOrCreate(fact.category, fact, {
                 channel: channelId !== "unknown" ? channelId : undefined,
                 senderId: captureSenderId,
+                scope: factScope,
               });
               await store.update(fact.category, newAtom.id, {
                 appendEvolution: `${new Date().toISOString().slice(0, 10)}: supersedes ${oldRef}(${channelId}) — 矛盾偵測自動取代`,
@@ -408,10 +498,12 @@ function registerHooks(state: PluginState): void {
             continue;
           }
 
-          // Create new atom
+          // Create new atom (G1-B: scope-aware)
+          const factScope = classifyScope(lastIntent, fact.text);
           const atom = await store.findOrCreate(fact.category, fact, {
             channel: channelId !== "unknown" ? channelId : undefined,
             senderId: captureSenderId,
+            scope: factScope,
           });
           const chunks = chunkAtom(atom);
           if (chunks.length > 0) {
@@ -612,8 +704,10 @@ function handleForgetFlow(
 async function handleForgetFlowAsync(
   state: PluginState,
   queryForRecall: string,
+  senderId?: string,
+  senderIsOwner?: boolean,
 ): Promise<{ prependContext: string } | undefined> {
-  const { store, vectors, recall, log } = state;
+  const { cfg, store, vectors, recall, log } = state;
 
   // Handle pending confirmation
   if (state.pendingForget && Date.now() - state.pendingForget.timestamp < 5 * 60 * 1000) {
@@ -625,6 +719,22 @@ async function handleForgetFlowAsync(
       const idx = numMatch ? parseInt(numMatch[1], 10) - 1 : 0;
       const candidate = state.pendingForget.candidates[idx] || state.pendingForget.candidates[0];
       if (candidate) {
+        // Tiered permission check: non-owner/admin can only delete [臨] atoms they created
+        if (cfg.permission.toolWriteRequiresOwner) {
+          const forgetLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds);
+          if (!hasWriteAccess(forgetLevel)) {
+            const targetAtom = await store.get(candidate.category as any, candidate.id);
+            const createdBySender = targetAtom?.sources.some(s => s.senderId === senderId) ?? false;
+            if (!targetAtom || targetAtom.confidence !== "[臨]" || !createdBySender) {
+              log.info(`BLOCKED forget confirmation from ${senderId ?? "unknown"} (level=${forgetLevel}, atom=${candidate.category}/${candidate.id})`);
+              state.pendingForget = null;
+              return {
+                prependContext: `<atomic-memory-action action="permission-denied">\nThis user cannot delete this memory (${candidate.category}/${candidate.id}). Only the manager or admin can delete non-temporary memories. Politely explain.\n</atomic-memory-action>`,
+              };
+            }
+          }
+        }
+
         try {
           const ref = `${candidate.category}/${candidate.id}`;
           await store.moveToDistant(candidate.category as any, candidate.id);
@@ -681,6 +791,23 @@ async function handleForgetFlowAsync(
       }
 
       if (forgetCandidates.length > 0) {
+        // Tiered: non-owner/admin can only see [臨] atoms they created
+        if (cfg.permission.toolWriteRequiresOwner) {
+          const fLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds);
+          if (!hasWriteAccess(fLevel)) {
+            forgetCandidates = forgetCandidates.filter((r: any) => {
+              const atom = r.atom;
+              return atom.confidence === "[臨]" && atom.sources?.some((s: any) => s.senderId === senderId);
+            });
+            if (forgetCandidates.length === 0) {
+              state.pendingForget = null;
+              return {
+                prependContext: `<atomic-memory-action action="permission-denied">\nFound matching memories but this user cannot delete them. Only the manager or admin can delete non-temporary memories. Politely explain.\n</atomic-memory-action>`,
+              };
+            }
+          }
+        }
+
         state.pendingForget = {
           target: forgetResult.target,
           candidates: forgetCandidates.slice(0, 5).map((r: any) => ({
@@ -776,7 +903,7 @@ function registerTools(state: PluginState): void {
       name: "atom_recall",
       label: "Atom Recall",
       description:
-        "Search through structured atomic memories (人事時地物). Use when you need specific knowledge about people, events, places, topics, or things the user has discussed.",
+        "Search through structured atomic memories (人事時地物). Use when you need specific knowledge about people, events, places, topics, or things the user has discussed. Set crossPlatform=true to search across all channels (e.g. find LINE facts from Discord).",
       parameters: Type.Object({
         query: Type.String({ description: "Search query" }),
         category: Type.Optional(
@@ -787,21 +914,26 @@ function registerTools(state: PluginState): void {
           }),
         ),
         limit: Type.Optional(Type.Number({ description: "Max results (default: 5)" })),
+        crossPlatform: Type.Optional(Type.Boolean({ description: "Search across all platforms, ignoring source channel isolation (default: false)" })),
       }),
       async execute(_toolCallId: string, params: unknown) {
-        const { query, category, limit = 5 } = params as {
+        const { query, category, limit = 5, crossPlatform = false } = params as {
           query: string;
           category?: AtomCategory;
           limit?: number;
+          crossPlatform?: boolean;
         };
 
+        const identityLinks = cfg.crossPlatform.enabled ? (toolCtx as any).identityLinks : undefined;
         const results = await recall.search(query, {
           topK: limit,
           senderId: toolCtx.requesterSenderId,
           channel: toolCtx.messageChannel,
-          isolationMode: cfg.memoryIsolation,
+          isolationMode: crossPlatform ? "shared" : cfg.memoryIsolation,
           atomStorePath: cfg.atomStorePath,
           actrWeight: cfg.actr.weight,
+          identityLinks,
+          crossPlatformRecall: crossPlatform || (cfg.crossPlatform.enabled && !!identityLinks),
         });
         const filtered = category
           ? results.filter((r) => r.atom.category === category)
@@ -818,7 +950,10 @@ function registerTools(state: PluginState): void {
           .map((r, i) => {
             const a = r.atom;
             const label = CATEGORY_LABELS[a.category];
-            return `${i + 1}. [${label}:${a.category}/${a.id}] ${a.confidence} (${(r.score * 100).toFixed(0)}%)\n   ${a.knowledge.slice(0, 200)}`;
+            const sourceTag = a.sources.length > 0
+              ? ` [${[...new Set(a.sources.map(s => s.channel))].join("/")}]`
+              : "";
+            return `${i + 1}. [${label}:${a.category}/${a.id}] ${a.confidence} (${(r.score * 100).toFixed(0)}%)${sourceTag}\n   ${a.knowledge.slice(0, 200)}`;
           })
           .join("\n\n");
 
@@ -831,6 +966,7 @@ function registerTools(state: PluginState): void {
               confidence: r.atom.confidence,
               score: r.score,
               knowledge: r.atom.knowledge,
+              sources: r.atom.sources,
             })),
           },
         };
@@ -862,12 +998,15 @@ function registerTools(state: PluginState): void {
         ),
       }),
       async execute(_toolCallId: string, params: unknown) {
-        // Permission check: only owner can store memories
-        if (cfg.permission.toolWriteRequiresOwner && toolCtx.senderIsOwner === false) {
-          return {
-            content: [{ type: "text", text: "Permission denied: only the owner can store memories." }],
-            details: { error: "permission_denied", action: "store" },
-          };
+        // Permission check: owner or admin can store memories
+        if (cfg.permission.toolWriteRequiresOwner) {
+          const toolLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds);
+          if (!hasWriteAccess(toolLevel)) {
+            return {
+              content: [{ type: "text", text: "Permission denied: only the manager or admin can store memories." }],
+              details: { error: "permission_denied", action: "store" },
+            };
+          }
         }
 
         const {
@@ -905,9 +1044,11 @@ function registerTools(state: PluginState): void {
           };
         }
 
+        // G1-B: Tool-invoked store is always memory-store intent → user scope
+        const toolScope = classifyScope("memory-store", text);
         const sourceOpts = toolCtx.requesterSenderId
-          ? { channel: toolCtx.messageChannel ?? "unknown", senderId: toolCtx.requesterSenderId }
-          : undefined;
+          ? { channel: toolCtx.messageChannel ?? "unknown", senderId: toolCtx.requesterSenderId, scope: toolScope }
+          : { scope: toolScope };
         const atom = await store.findOrCreate(category, { text, category, confidence }, sourceOpts);
         const chunks = chunkAtom(atom);
         if (chunks.length > 0) {
@@ -943,13 +1084,11 @@ function registerTools(state: PluginState): void {
         ),
       }),
       async execute(_toolCallId: string, params: unknown) {
-        // Permission check: only owner can forget memories
-        if (cfg.permission.toolWriteRequiresOwner && toolCtx.senderIsOwner === false) {
-          return {
-            content: [{ type: "text", text: "Permission denied: only the owner can delete memories." }],
-            details: { error: "permission_denied", action: "forget" },
-          };
-        }
+        // Permission: tiered forget — owner/admin can delete anything,
+        // regular user can only delete [臨] atoms they created.
+        const forgetLevel = resolvePermissionLevel(
+          toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds,
+        );
 
         const { query, atomRef, archive = true } = params as {
           query?: string;
@@ -958,6 +1097,20 @@ function registerTools(state: PluginState): void {
         };
 
         if (atomRef) {
+          // Tiered check for direct atomRef deletion
+          if (cfg.permission.toolWriteRequiresOwner && !hasWriteAccess(forgetLevel)) {
+            const [chkCat, chkId] = atomRef.split("/") as [AtomCategory, string];
+            const targetAtom = chkCat && chkId ? await store.get(chkCat, chkId) : undefined;
+            if (targetAtom) {
+              const createdBySender = targetAtom.sources.some(s => s.senderId === toolCtx.requesterSenderId);
+              if (targetAtom.confidence !== "[臨]" || !createdBySender) {
+                return {
+                  content: [{ type: "text", text: "Permission denied: you can only delete temporary memories you created." }],
+                  details: { error: "permission_denied", action: "forget", level: forgetLevel },
+                };
+              }
+            }
+          }
           const [category, id] = atomRef.split("/") as [AtomCategory, string];
           if (!category || !id) {
             return {
@@ -1019,6 +1172,17 @@ function registerTools(state: PluginState): void {
           if (clearWinner) {
             const target = results[0];
             const ref = `${target.atom.category}/${target.atom.id}`;
+
+            // Tiered permission check for query-based forget
+            if (cfg.permission.toolWriteRequiresOwner && !hasWriteAccess(forgetLevel)) {
+              const createdBySender = target.atom.sources.some(s => s.senderId === toolCtx.requesterSenderId);
+              if (target.atom.confidence !== "[臨]" || !createdBySender) {
+                return {
+                  content: [{ type: "text", text: "Permission denied: you can only delete temporary memories you created." }],
+                  details: { error: "permission_denied", action: "forget", level: forgetLevel },
+                };
+              }
+            }
             if (archive) {
               await store.moveToDistant(target.atom.category, target.atom.id);
             } else {
@@ -1081,9 +1245,10 @@ function registerTools(state: PluginState): void {
         displayName: Type.Optional(Type.String({ description: "Display name on the target platform" })),
       }),
       async execute(_toolCallId: string, params: unknown) {
-        if (cfg.permission.toolWriteRequiresOwner && toolCtx.senderIsOwner === false) {
+        const linkLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds);
+        if (cfg.permission.toolWriteRequiresOwner && !hasWriteAccess(linkLevel)) {
           return {
-            content: [{ type: "text", text: "Permission denied: only the owner can link identities." }],
+            content: [{ type: "text", text: "Permission denied: only the manager or admin can link identities." }],
             details: { error: "permission_denied", action: "link" },
           };
         }
@@ -1118,6 +1283,199 @@ function registerTools(state: PluginState): void {
       },
     })) as OpenClawPluginToolFactory,
     { name: "atom_link" },
+  );
+
+  // atom_whois — cross-platform person info lookup
+  api.registerTool(
+    ((toolCtx: OpenClawPluginToolContext) => ({
+      name: "atom_whois",
+      label: "Atom Whois",
+      description:
+        "Look up a person across all platforms. Returns all known information about them: which platforms they're on, what you know about them, and when they were last seen. Use when someone asks '小明是誰' or 'who is xiaoming'.",
+      parameters: Type.Object({
+        query: Type.String({ description: "Person name, userId, or channel:senderId to look up" }),
+      }),
+      async execute(_toolCallId: string, params: unknown) {
+        // Permission check: owner-only mode
+        if (cfg.memoryIsolation === "owner-only" && toolCtx.senderIsOwner === false) {
+          return {
+            content: [{ type: "text", text: "Permission denied: only the owner can look up person info." }],
+            details: { error: "permission_denied", action: "whois" },
+          };
+        }
+
+        const { query } = params as { query: string };
+        const queryLower = query.toLowerCase().trim();
+
+        const personAtoms = await store.list("person");
+        const matches: Array<{ atom: typeof personAtoms[0]; matchType: string }> = [];
+
+        for (const pa of personAtoms) {
+          // Match by id
+          if (pa.id.toLowerCase() === queryLower) {
+            matches.push({ atom: pa, matchType: "id" });
+            continue;
+          }
+          // Match by trigger (name, senderId, channel:senderId)
+          const triggerMatch = pa.triggers.some(t => {
+            const tl = t.toLowerCase();
+            return tl === queryLower || tl.includes(queryLower) || queryLower.includes(tl);
+          });
+          if (triggerMatch) {
+            matches.push({ atom: pa, matchType: "trigger" });
+            continue;
+          }
+          // Match by source senderId
+          const sourceMatch = pa.sources.some(s =>
+            s.senderId?.toLowerCase() === queryLower,
+          );
+          if (sourceMatch) {
+            matches.push({ atom: pa, matchType: "source" });
+          }
+        }
+
+        if (matches.length === 0) {
+          return {
+            content: [{ type: "text", text: `No person found matching "${query}".` }],
+            details: { count: 0 },
+          };
+        }
+
+        // Also find non-person atoms related to matched persons
+        const relatedAtoms: RecalledAtom[] = [];
+        for (const m of matches) {
+          for (const relRef of m.atom.related) {
+            const [relCat, relId] = relRef.split("/") as [AtomCategory, string];
+            if (relCat && relId) {
+              const relAtom = await store.get(relCat, relId);
+              if (relAtom) {
+                relatedAtoms.push({ atom: relAtom, score: 0.5, matchedChunks: [] });
+              }
+            }
+          }
+        }
+
+        const lines: string[] = [];
+        for (const m of matches) {
+          const pa = m.atom;
+          const platforms = [...new Set(pa.sources.map(s => s.channel))];
+          const identities = pa.sources.map(s => `${s.channel}:${s.senderId ?? "?"}`);
+
+          lines.push(`## person/${pa.id} ${pa.confidence}`);
+          lines.push(`Platforms: ${platforms.join(", ") || "unknown"}`);
+          lines.push(`Identities: ${identities.join(", ")}`);
+          lines.push(`Last seen: ${pa.lastUsed}`);
+          lines.push(`Confirmations: ${pa.confirmations}`);
+          lines.push(`Knowledge:\n${pa.knowledge}`);
+        }
+
+        if (relatedAtoms.length > 0) {
+          lines.push(`\n--- Related ---`);
+          for (const r of relatedAtoms) {
+            const srcTag = r.atom.sources.length > 0
+              ? ` [${[...new Set(r.atom.sources.map(s => s.channel))].join("/")}]`
+              : "";
+            lines.push(`[${r.atom.category}/${r.atom.id}]${srcTag} ${r.atom.knowledge.slice(0, 120)}`);
+          }
+        }
+
+        return {
+          content: [{ type: "text", text: lines.join("\n") }],
+          details: {
+            count: matches.length,
+            persons: matches.map(m => ({
+              ref: `person/${m.atom.id}`,
+              platforms: [...new Set(m.atom.sources.map(s => s.channel))],
+              sources: m.atom.sources,
+              knowledge: m.atom.knowledge,
+              lastUsed: m.atom.lastUsed,
+              confirmations: m.atom.confirmations,
+            })),
+            related: relatedAtoms.map(r => ({
+              ref: `${r.atom.category}/${r.atom.id}`,
+              knowledge: r.atom.knowledge.slice(0, 120),
+            })),
+          },
+        };
+      },
+    })) as OpenClawPluginToolFactory,
+    { name: "atom_whois" },
+  );
+
+  // atom_permission — owner-only admin management
+  api.registerTool(
+    ((toolCtx: OpenClawPluginToolContext) => ({
+      name: "atom_permission",
+      label: "Atom Permission",
+      description:
+        "Manage memory admin permissions. Only the owner/manager can use this. " +
+        "Use when the owner says things like '讓 user123 也能管理記憶' or 'remove admin user456'.",
+      parameters: Type.Object({
+        action: Type.Unsafe<"add" | "remove" | "list">({
+          type: "string",
+          enum: ["add", "remove", "list"],
+          description: "Action: add/remove admin, or list current admins",
+        }),
+        userId: Type.Optional(Type.String({ description: "Platform user ID to add/remove as admin" })),
+      }),
+      async execute(_toolCallId: string, params: unknown) {
+        // Only owner can manage permissions
+        if (toolCtx.senderIsOwner !== true) {
+          return {
+            content: [{ type: "text", text: "Permission denied: only the manager can manage admin permissions." }],
+            details: { error: "permission_denied", action: "permission" },
+          };
+        }
+
+        const { action, userId } = params as { action: "add" | "remove" | "list"; userId?: string };
+        const storePath = api.resolvePath(cfg.atomStorePath);
+
+        if (action === "list") {
+          const runtimeAdmins = await loadRuntimeAdmins(storePath);
+          const allAdmins = [...new Set([...cfg.permission.adminIds, ...runtimeAdmins])];
+          return {
+            content: [{ type: "text", text: allAdmins.length > 0 ? `Current admins: ${allAdmins.join(", ")}` : "No admins configured." }],
+            details: { admins: allAdmins },
+          };
+        }
+
+        if (!userId) {
+          return {
+            content: [{ type: "text", text: "Please specify a userId." }],
+            details: { error: "missing_param" },
+          };
+        }
+
+        if (action === "add") {
+          const added = await addRuntimeAdmin(storePath, userId);
+          if (added) {
+            state.runtimeAdminIds.push(userId);
+          }
+          return {
+            content: [{ type: "text", text: added ? `Added admin: ${userId}` : `${userId} is already an admin.` }],
+            details: { action: "admin_added", userId, added },
+          };
+        }
+
+        if (action === "remove") {
+          const removed = await removeRuntimeAdmin(storePath, userId);
+          if (removed) {
+            const idx = state.runtimeAdminIds.indexOf(userId);
+            if (idx >= 0) state.runtimeAdminIds.splice(idx, 1);
+          }
+          return {
+            content: [{ type: "text", text: removed ? `Removed admin: ${userId}` : `${userId} is not a runtime admin.` }],
+            details: { action: "admin_removed", userId, removed },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "Invalid action. Use: add, remove, or list." }],
+          details: { error: "invalid_action" },
+        };
+      },
+    })) as OpenClawPluginToolFactory,
+    { name: "atom_permission" },
   );
 }
 
@@ -1316,6 +1674,34 @@ function registerService(state: PluginState): void {
 }
 
 // ============================================================================
+// Name Similarity (for entity merge suggestion)
+// ============================================================================
+
+/**
+ * Simple name similarity: normalized common character ratio.
+ * Handles CJK names (character overlap) and Latin names (case-insensitive).
+ * Returns 0-1 where 1 = identical.
+ */
+function nameSimilarity(a: string, b: string): number {
+  const al = a.toLowerCase().trim();
+  const bl = b.toLowerCase().trim();
+  if (al === bl) return 1.0;
+  if (al.length === 0 || bl.length === 0) return 0;
+
+  // For short CJK names (2-4 chars), use character overlap
+  const aChars = [...al];
+  const bChars = [...bl];
+  const aSet = new Set(aChars);
+  const bSet = new Set(bChars);
+  let common = 0;
+  for (const c of aSet) {
+    if (bSet.has(c)) common++;
+  }
+  const maxLen = Math.max(aSet.size, bSet.size);
+  return common / maxLen;
+}
+
+// ============================================================================
 // Plugin Definition
 // ============================================================================
 
@@ -1371,7 +1757,14 @@ const atomicMemoryPlugin = {
         currentTurn: 0,
         askedCleanup: false,
       },
+      runtimeAdminIds: [],
     };
+
+    // Load runtime admin IDs (non-blocking — will be available by first hook call)
+    loadRuntimeAdmins(resolvedStorePath).then(ids => {
+      state.runtimeAdminIds = ids;
+      if (ids.length > 0) log.info(`loaded ${ids.length} runtime admins`);
+    }).catch(() => { /* ignore — empty admin list is fine */ });
 
     // Register all subsystems
     registerHooks(state);
