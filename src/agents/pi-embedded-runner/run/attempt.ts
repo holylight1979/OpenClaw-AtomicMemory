@@ -1653,6 +1653,7 @@ export async function runEmbeddedAttempt(
           senderName: params.senderName ?? undefined,
           senderUsername: params.senderUsername ?? undefined,
           senderIsOwner: params.senderIsOwner ?? undefined,
+          identityLinks: params.config?.session?.identityLinks ?? undefined,
         };
         const hookResult = await resolvePromptBuildHookResult({
           prompt: params.prompt,

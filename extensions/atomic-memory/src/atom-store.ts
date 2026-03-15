@@ -121,7 +121,7 @@ export class AtomStore {
   async update(
     category: AtomCategory,
     id: string,
-    patch: Partial<Pick<Atom, "confidence" | "lastUsed" | "confirmations" | "tags" | "related" | "actions" | "sources">> & {
+    patch: Partial<Pick<Atom, "confidence" | "lastUsed" | "confirmations" | "tags" | "related" | "actions" | "sources" | "triggers">> & {
       appendKnowledge?: string;
       appendEvolution?: string;
     },
@@ -136,6 +136,7 @@ export class AtomStore {
     if (patch.tags !== undefined) atom.tags = patch.tags;
     if (patch.related !== undefined) atom.related = patch.related;
     if (patch.actions !== undefined) atom.actions = patch.actions;
+    if (patch.triggers !== undefined) atom.triggers = patch.triggers;
 
     if (patch.sources) {
       // Merge sources, avoid duplicates

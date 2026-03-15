@@ -412,6 +412,8 @@ export type PluginHookAgentContext = {
   senderUsername?: string;
   /** Whether the sender is an owner of this agent. */
   senderIsOwner?: boolean;
+  /** Cross-platform identity links from session config, mapping canonical IDs to provider-prefixed peer IDs. */
+  identityLinks?: Record<string, string[]>;
 };
 
 // before_model_resolve hook

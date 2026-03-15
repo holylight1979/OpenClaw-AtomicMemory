@@ -9,7 +9,7 @@ import type { OllamaClient } from "./ollama-client.js";
 import type { VectorClient } from "./vector-client.js";
 import type { Atom, AtomCategory, RecalledAtom, VectorResult } from "./types.js";
 import { CONFIDENCE_WEIGHT } from "./types.js";
-import { resolveEntity } from "./entity-resolver.js";
+import { resolveEntity, resolveLinkedPeerIds, type IdentityLinks } from "./entity-resolver.js";
 import { computeActivation, recordBatchAccess } from "./actr-scoring.js";
 import { createLogger } from "./logger.js";
 
@@ -27,6 +27,10 @@ export type RecallOptions = {
   atomStorePath?: string;
   /** ACT-R weight in ranking formula (default 0.15). */
   actrWeight?: number;
+  /** Cross-platform identity links for identity-aware isolation. */
+  identityLinks?: IdentityLinks;
+  /** Enable cross-platform recall (bypass source isolation for linked identities). */
+  crossPlatformRecall?: boolean;
 };
 
 export class RecallEngine {
@@ -107,13 +111,37 @@ export class RecallEngine {
       const atom = await this.store.get(category, id);
       if (!atom) continue;
 
-      // User-scoped isolation: only return atoms related to this sender
+      // User-scoped isolation: only return atoms related to this sender (identity-aware)
       if (options.isolationMode === "user-scoped" && options.senderId) {
-        const hasSenderSource = atom.sources.some(
-          (s) => s.senderId === options.senderId,
-        );
         const isSharedKnowledge = atom.sources.length === 0;
-        if (!hasSenderSource && !isSharedKnowledge) continue;
+        if (!isSharedKnowledge) {
+          const hasSenderSource = atom.sources.some(
+            (s) => s.senderId === options.senderId,
+          );
+          // Identity-aware: also match linked peer IDs from identityLinks
+          let hasLinkedSource = false;
+          if (!hasSenderSource && options.identityLinks && options.channel) {
+            const linked = resolveLinkedPeerIds(options.senderId, options.channel, options.identityLinks);
+            hasLinkedSource = linked.length > 0 && atom.sources.some((s) =>
+              linked.some((l) => s.channel === l.channel && s.senderId === l.senderId),
+            );
+          }
+          if (!hasSenderSource && !hasLinkedSource) continue;
+        }
+      }
+
+      // Cross-platform recall: when enabled, also find person atoms by identityLinks
+      if (options.crossPlatformRecall && options.identityLinks && atom.category === "person") {
+        // Person atoms matching linked identities get a boost
+        if (options.senderId && options.channel) {
+          const linked = resolveLinkedPeerIds(options.senderId, options.channel, options.identityLinks);
+          const hasLinked = linked.length > 0 && atom.sources.some((s) =>
+            linked.some((l) => s.channel === l.channel && s.senderId === l.senderId),
+          );
+          if (hasLinked) {
+            result.score += 0.10; // Cross-platform identity boost
+          }
+        }
       }
 
       // If sender is known, prioritize their person atom
@@ -124,6 +152,7 @@ export class RecallEngine {
           options.channel ?? "",
           options.displayName,
           personAtoms,
+          options.identityLinks,
         );
         if (resolved && resolved.id === atom.id) {
           result.score += 0.15; // Boost sender's own atom
