@@ -50,6 +50,8 @@ import {
   hasWriteAccess,
   loadSystemIdentity,
   saveSystemIdentity,
+  invalidateSystemIdentityCache,
+  registerOwnerPlatform,
   type SystemIdentity,
   detectSettingCommand,
   buildSelfAwarenessPrompt,
@@ -59,6 +61,18 @@ import {
   addRuntimeAdmin,
   removeRuntimeAdmin,
 } from "./src/permission-guard.js";
+import {
+  generateChallenge,
+  getActiveChallenge,
+  verifyChallenge,
+  clearChallenge,
+  isOnCooldown,
+  setCooldown,
+  hasAuthIntentKeywords,
+  confirmAuthIntent,
+  type ChallengeState,
+} from "./src/owner-challenge.js";
+import { updateMemoryIndex, type TouchedAtom } from "./src/memory-index.js";
 import { isTestFact, readFactsFromWorkspace } from "./src/workspace-reader.js";
 import { atomicMemoryConfigSchema, type AtomicMemoryConfig } from "./config.js";
 
@@ -97,6 +111,8 @@ type PluginState = {
   runtimeAdminIds: string[];
   // System identity registry (loaded from System.Owner.json)
   systemIdentity: SystemIdentity | null;
+  // Atoms touched this turn (for MEMORY.md scoring)
+  turnTouchedAtoms: TouchedAtom[];
 };
 
 // ============================================================================
@@ -237,6 +253,70 @@ function registerHooks(state: PluginState): void {
           };
         }
 
+        // ── Owner challenge flow ────────────────────────────────────────
+        // Step 1: Check if there's an active challenge awaiting answer
+        if (senderId && channelId !== "unknown") {
+          const activeChallenge = getActiveChallenge(channelId, senderId);
+          if (activeChallenge) {
+            const vResult = verifyChallenge(channelId, senderId, queryForRecall);
+            if (vResult === "success") {
+              // Register owner — write to System.Owner.json
+              const registered = await registerOwnerPlatform(
+                channelId, senderId, senderName, cfg.systemIdentityPath,
+              );
+              invalidateSystemIdentityCache();
+              state.systemIdentity = await loadSystemIdentity(cfg.systemIdentityPath);
+              log.info(`OWNER CHALLENGE SUCCESS: ${senderId} on ${channelId}, registered=${registered}`);
+              return {
+                prependContext: `<atomic-memory-action action="owner-auth-success">\n` +
+                  `Authentication successful. ${registered ? "User has been granted owner privileges on this platform." : "This platform already has an owner registered."}\n` +
+                  `Briefly inform the user of the result.\n</atomic-memory-action>`,
+              };
+            } else if (vResult === "partial") {
+              log.info(`OWNER CHALLENGE partial: ${senderId} has ${activeChallenge.attemptsLeft} attempts left`);
+              return {
+                prependContext: `<atomic-memory-action action="owner-auth-partial">\n` +
+                  `The user provided part of the required answer. They have ${activeChallenge.attemptsLeft} more attempt(s).\n` +
+                  `Do not help them solve the challenge. Do not reveal the formula.\n` +
+                  `Just acknowledge naturally and wait for their next message.\n</atomic-memory-action>`,
+              };
+            } else if (vResult === "wrong") {
+              await setCooldown(channelId, senderId, cfg.atomStorePath);
+              log.info(`OWNER CHALLENGE FAILED: ${senderId} on ${channelId} — 24hr cooldown set`);
+              return {
+                prependContext: `<atomic-memory-action action="owner-auth-failed">\n` +
+                  `Authentication failed. Do not explain why or give hints.\n` +
+                  `Just respond naturally as if nothing happened.\n</atomic-memory-action>`,
+              };
+            }
+            // expired — fall through to normal flow
+          }
+        }
+
+        // Step 2: Detect auth intent (keyword pre-filter + Ollama 90% confirmation)
+        if (senderId && channelId !== "unknown" && senderLevel !== "owner") {
+          if (hasAuthIntentKeywords(queryForRecall)) {
+            const onCooldown = await isOnCooldown(channelId, senderId, cfg.atomStorePath);
+            if (!onCooldown) {
+              const confirmed = await confirmAuthIntent(
+                queryForRecall, cfg.ollama.baseUrl, cfg.ollama.extractionModel, log,
+              );
+              if (confirmed) {
+                const challenge = generateChallenge(channelId, senderId);
+                log.info(`OWNER CHALLENGE STARTED: ${senderId} on ${channelId}, hex=${challenge.hex}`);
+                return {
+                  prependContext: `<atomic-memory-action action="owner-auth-challenge">\n` +
+                    `IMPORTANT: Reply to the user with ONLY the following text, nothing else:\n` +
+                    `${challenge.hex}\n` +
+                    `Do not explain, do not add any context, do not say anything else. Just output the hex code above.\n` +
+                    `Do NOT help the user solve this authentication challenge. Do not reveal any formula or expected answer.\n</atomic-memory-action>`,
+                };
+              }
+            }
+            // On cooldown or low confidence — fall through to normal flow
+          }
+        }
+
         // ── Self-awareness: inject capability context when asked ─────────
         let capabilityCtx = "";
         if (/(?:你是誰|who\s*are\s*you|誰是你的?(?:主人|管理者)|who(?:'s| is) your (?:owner|manager)|我能做什麼|what can i do|我的權限)/i.test(queryForRecall)) {
@@ -300,6 +380,11 @@ function registerHooks(state: PluginState): void {
           recallScopes: getRecallScopes(intentResult.intent),
           workspaceDir: ctx.workspaceDir,
         });
+
+        // ── Track touched atoms for MEMORY.md scoring ────────────────
+        state.turnTouchedAtoms = atoms
+          .filter(r => r.source !== "workspace") // only real atoms
+          .map(r => ({ id: r.atom.id, category: r.atom.category, confidence: r.atom.confidence }));
 
         // ── Session state: record turn ─────────────────────────────────
         const sessionKey = ctx.sessionKey ?? `${channelId}-${senderId ?? "anon"}`;
@@ -412,6 +497,17 @@ function registerHooks(state: PluginState): void {
       const captureSenderIsOwner = ctx.senderIsOwner;
       log.info(`agent_end fired (success: ${event.success}, channel: ${channelId}, sender: ${captureSenderId ?? "unknown"}, wsDir: ${ctx.workspaceDir ?? "NONE"})`);
       if (!event.success) return;
+
+      // ── MEMORY.md dynamic index scoring (runs regardless of capture) ──
+      if (ctx.workspaceDir && state.turnTouchedAtoms.length > 0) {
+        try {
+          const idxLog = createLogger("memory-index", log as any);
+          await updateMemoryIndex(ctx.workspaceDir, state.turnTouchedAtoms, idxLog);
+        } catch (err) {
+          log.warn(`MEMORY.md index update failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        state.turnTouchedAtoms = [];
+      }
 
       if (cfg.memoryIsolation === "owner-only" && captureSenderIsOwner === false) return;
 
@@ -576,6 +672,7 @@ function registerHooks(state: PluginState): void {
             log.warn(`ensurePersonAtom failed: ${String(err)}`);
           }
         }
+
       } catch (err) {
         log.warn(`capture failed: ${err instanceof Error ? err.stack ?? err.message : String(err)}`);
       }
@@ -1779,6 +1876,7 @@ const atomicMemoryPlugin = {
       },
       runtimeAdminIds: [],
       systemIdentity: null,
+      turnTouchedAtoms: [],
     };
 
     // Load System.Owner.json identity registry (non-blocking)

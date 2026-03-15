@@ -22,6 +22,8 @@ export type PlatformOwnerEntry = {
   userId: string;
   displayName?: string;
   auto?: boolean;
+  /** ISO date when owner was authenticated via challenge on this platform. */
+  authenticatedAt?: string;
 };
 
 export type PlatformBotEntry = {
@@ -109,6 +111,52 @@ export function isAdminByIdentity(
   return identity.admins.some(a =>
     a.userId === senderId && (!a.platform || a.platform === channel),
   );
+}
+
+/**
+ * Register a sender as owner on a specific platform.
+ * Adds (not overwrites) platform entry to System.Owner.json.
+ * If platform already has an owner, returns false (locked).
+ */
+export async function registerOwnerPlatform(
+  channel: string,
+  senderId: string,
+  displayName: string | undefined,
+  identityPath?: string,
+): Promise<boolean> {
+  const filePath = identityPath ?? DEFAULT_IDENTITY_PATH;
+  let identity = await loadSystemIdentity(filePath);
+  if (!identity) {
+    // Bootstrap a new identity file
+    identity = {
+      version: 2,
+      owner: { displayName: displayName || "", platforms: {} },
+      bot: { displayName: "", platforms: {} },
+      admins: [],
+    };
+  }
+
+  // Check if platform already has an owner (locked)
+  const existing = identity.owner.platforms[channel];
+  if (existing && existing.userId && existing.userId.length > 0 && !existing.auto) {
+    return false; // already registered — locked
+  }
+
+  // Add this platform identity
+  identity.owner.platforms[channel] = {
+    userId: senderId,
+    displayName: displayName || "",
+    authenticatedAt: new Date().toISOString(),
+  };
+
+  // Set top-level displayName if empty
+  if (!identity.owner.displayName && displayName) {
+    identity.owner.displayName = displayName;
+  }
+
+  identity.version = 2;
+  await saveSystemIdentity(identity, filePath);
+  return true;
 }
 
 // ============================================================================
