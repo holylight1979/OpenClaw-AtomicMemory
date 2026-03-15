@@ -12,6 +12,7 @@ import { CONFIDENCE_WEIGHT } from "./types.js";
 import { resolveEntity, resolveLinkedPeerIds, type IdentityLinks } from "./entity-resolver.js";
 import { computeActivation, recordBatchAccess } from "./actr-scoring.js";
 import { createLogger } from "./logger.js";
+import { searchWorkspaceFacts, type WorkspaceFact } from "./workspace-reader.js";
 
 const log = createLogger("recall");
 
@@ -33,6 +34,8 @@ export type RecallOptions = {
   crossPlatformRecall?: boolean;
   /** G1-B: Which atom scopes to include in results. If unset, all scopes pass. */
   recallScopes?: AtomScope[];
+  /** Workspace directory for searching daily memory files (keyword fallback). */
+  workspaceDir?: string;
 };
 
 export class RecallEngine {
@@ -224,6 +227,44 @@ export class RecallEngine {
           recalled.push({ atom: relAtom, score: r.score * 0.6, matchedChunks: [] });
           recalledRefs.add(relRef);
         }
+      }
+    }
+
+    // Phase 11: Workspace fact search (keyword fallback for daily files)
+    if (options.workspaceDir) {
+      const wsFacts = await searchWorkspaceFacts(query, options.workspaceDir, 3);
+      // Merge workspace facts as pseudo-atoms (lower weight than real atoms)
+      for (const wf of wsFacts) {
+        // Skip if already covered by an existing atom
+        const alreadyCovered = recalled.some(r =>
+          r.atom.knowledge.toLowerCase().includes(wf.text.toLowerCase().slice(0, 30)),
+        );
+        if (alreadyCovered) continue;
+
+        // Create a pseudo-atom for display in context
+        const pseudoAtom: Atom = {
+          id: `ws-${wf.source.replace(/[/\\]/g, "-")}`,
+          title: wf.text.slice(0, 40),
+          category: "topic",
+          confidence: "[臨]",
+          triggers: [],
+          lastUsed: new Date().toISOString().slice(0, 10),
+          confirmations: 0,
+          tags: [],
+          related: [],
+          sources: [{ channel: "workspace" }],
+          scope: "global",
+          knowledge: wf.text,
+          actions: "",
+          evolutionLog: [],
+        };
+        // Workspace facts get a lower base score (0.10 category weight)
+        recalled.push({
+          atom: pseudoAtom,
+          score: wf.score * 0.35, // Max ~0.35 (lower than real atoms)
+          matchedChunks: [],
+          source: "workspace",
+        });
       }
     }
 

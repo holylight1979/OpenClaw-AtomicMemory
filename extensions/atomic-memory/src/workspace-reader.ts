@@ -97,7 +97,7 @@ export async function readFactsFromWorkspace(
   log?.info(`readFactsFromWorkspace wsDir=${wsDir}`);
   const facts: ExtractedFact[] = [];
 
-  for (const filename of ["MEMORY.md", "USER.md"]) {
+  for (const filename of ["MEMORY.md", "USER.md", "SOUL.md"]) {
     const fullPath = join(wsDir, filename);
     try {
       const content = await readFile(fullPath, "utf-8");
@@ -105,7 +105,10 @@ export async function readFactsFromWorkspace(
       log?.info(`parsed ${parsed.length} facts from ${fullPath}`);
       facts.push(...parsed);
     } catch (err) {
-      log?.warn(`failed to read ${fullPath}: ${err instanceof Error ? err.message : String(err)}`);
+      // SOUL.md may not exist — only warn for MEMORY.md and USER.md
+      if (filename !== "SOUL.md") {
+        log?.warn(`failed to read ${fullPath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
     }
   }
 
@@ -133,4 +136,105 @@ export async function readFactsFromWorkspace(
   }
 
   return facts;
+}
+
+// ============================================================================
+// Workspace fact search (keyword-based)
+// ============================================================================
+
+export type WorkspaceFact = {
+  text: string;
+  source: string; // filename
+  score: number;  // simple keyword relevance score
+};
+
+/**
+ * Search workspace daily files and MEMORY.md/USER.md for facts matching a query.
+ * Uses simple keyword matching (not vector search) for speed.
+ */
+export async function searchWorkspaceFacts(
+  query: string,
+  workspaceDir: string | undefined,
+  limit: number = 5,
+  log?: Logger,
+): Promise<WorkspaceFact[]> {
+  if (!workspaceDir) return [];
+
+  const wsDir = workspaceDir;
+  const results: WorkspaceFact[] = [];
+  const queryTerms = extractSearchTerms(query);
+  if (queryTerms.length === 0) return [];
+
+  // Search MEMORY.md, USER.md, SOUL.md
+  for (const filename of ["MEMORY.md", "USER.md", "SOUL.md"]) {
+    const fullPath = join(wsDir, filename);
+    try {
+      const content = await readFile(fullPath, "utf-8");
+      const matches = matchFactLines(content, queryTerms, filename);
+      results.push(...matches);
+    } catch {
+      // file may not exist
+    }
+  }
+
+  // Search daily memory files (newest 5)
+  const memoryDir = join(wsDir, "memory");
+  try {
+    const entries = await readdir(memoryDir);
+    const mdFiles = entries.filter(f => f.endsWith(".md")).sort().reverse();
+    for (const filename of mdFiles.slice(0, 5)) {
+      const fullPath = join(memoryDir, filename);
+      try {
+        const content = await readFile(fullPath, "utf-8");
+        const matches = matchFactLines(content, queryTerms, `memory/${filename}`);
+        results.push(...matches);
+      } catch {
+        // skip unreadable files
+      }
+    }
+  } catch {
+    // memory/ directory may not exist
+  }
+
+  // Sort by score descending, return top N
+  results.sort((a, b) => b.score - a.score);
+  const topResults = results.slice(0, limit);
+  if (topResults.length > 0) {
+    log?.info(`workspace search found ${topResults.length} matching facts for "${query.slice(0, 60)}"`);
+  }
+  return topResults;
+}
+
+/** Extract meaningful search terms from a query (skip stopwords, short terms). */
+function extractSearchTerms(query: string): string[] {
+  const stopwords = new Set(["的", "了", "在", "是", "我", "你", "他", "她", "嗎", "呢", "吧", "啊", "有", "也", "和", "不",
+    "the", "a", "an", "is", "are", "was", "were", "do", "does", "did", "what", "who", "how", "my", "your", "i"]);
+  return query
+    .toLowerCase()
+    .split(/[\s,，。？！?!、]+/)
+    .filter(t => t.length >= 2 && !stopwords.has(t));
+}
+
+/** Match bullet-point lines against search terms, return scored results. */
+function matchFactLines(content: string, terms: string[], source: string): WorkspaceFact[] {
+  const results: WorkspaceFact[] = [];
+  for (const line of content.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith("- ") || trimmed.length < 8) continue;
+    const text = trimmed.slice(2).trim();
+    // Skip metadata lines
+    if (/^\*\*[^*]+:\*\*/.test(text)) continue;
+
+    const lower = text.toLowerCase();
+    let matchCount = 0;
+    for (const term of terms) {
+      if (lower.includes(term)) matchCount++;
+    }
+    if (matchCount === 0) continue;
+
+    // Score: proportion of matched terms
+    const score = matchCount / terms.length;
+    results.push({ text, source, score });
+  }
+  return results;
 }

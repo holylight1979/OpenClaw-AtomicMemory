@@ -105,6 +105,8 @@ export type AtomicMemoryConfig = {
     /** Enable automatic person atom merging when identityLinks match. Default true. */
     autoMerge: boolean;
   };
+  /** Path to System.Owner.json for unified identity registry. Default ~/.openclaw/System.Owner.json. */
+  systemIdentityPath: string;
 };
 
 // ============================================================================
@@ -153,7 +155,7 @@ export const atomicMemoryConfigSchema = {
 
     assertAllowedKeys(
       cfg,
-      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate", "tokenBudget", "actr", "episodic", "wisdom", "selfIteration", "permission", "crossPlatform"],
+      ["atomStorePath", "chromadb", "ollama", "autoRecall", "autoCapture", "ownerOnly", "memoryIsolation", "recall", "capture", "writeGate", "tokenBudget", "actr", "episodic", "wisdom", "selfIteration", "permission", "crossPlatform", "systemIdentityPath"],
       "atomic-memory config",
     );
 
@@ -275,6 +277,7 @@ export const atomicMemoryConfigSchema = {
         enabled: boolOrDefault(crossPlatformRaw.enabled, true),
         autoMerge: boolOrDefault(crossPlatformRaw.autoMerge, true),
       },
+      systemIdentityPath: strOrDefault(cfg.systemIdentityPath, join(homedir(), ".openclaw", "System.Owner.json")),
     };
   },
 

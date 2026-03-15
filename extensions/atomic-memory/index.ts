@@ -48,6 +48,9 @@ import {
 import {
   resolvePermissionLevel,
   hasWriteAccess,
+  loadSystemIdentity,
+  saveSystemIdentity,
+  type SystemIdentity,
   detectSettingCommand,
   buildSelfAwarenessPrompt,
   buildCapabilityContext,
@@ -92,6 +95,8 @@ type PluginState = {
   };
   // Runtime admin IDs (loaded from persistent JSON, merged with config.permission.adminIds)
   runtimeAdminIds: string[];
+  // System identity registry (loaded from System.Owner.json)
+  systemIdentity: SystemIdentity | null;
 };
 
 // ============================================================================
@@ -162,7 +167,7 @@ function registerHooks(state: PluginState): void {
   if (cfg.permission.botSelfAwareness) {
     api.on("before_prompt_build", (_event, _ctx) => {
       return {
-        appendSystemContext: buildSelfAwarenessPrompt(cfg),
+        appendSystemContext: buildSelfAwarenessPrompt(cfg, state.systemIdentity),
       };
     });
   }
@@ -209,13 +214,27 @@ function registerHooks(state: PluginState): void {
         intentLog.info(`${intentResult.intent} (confidence=${intentResult.confidence.toFixed(2)})`);
 
         // ── Permission: resolve sender level ─────────────────────────────
-        const senderLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds);
+        const senderLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds, channelId, state.systemIdentity);
 
         // ── Command interception: setting commands from non-authorized ───
         const settingKw = detectSettingCommand(queryForRecall);
         if ((intentResult.intent === "command" || settingKw) && settingKw && !hasWriteAccess(senderLevel)) {
           log.info(`BLOCKED setting command from ${senderId ?? "unknown"} (level=${senderLevel}, keyword="${settingKw}")`);
           return { prependContext: buildRejectionContext(settingKw, senderName) };
+        }
+
+        // ── /whoami: return sender identity info ───────────────────────
+        if (/(?:^|\s)(?:whoami|我的\s*ID|我的身[份分]|my\s*id)\s*[?？]?\s*$/i.test(queryForRecall)) {
+          const whoamiInfo = [
+            `平台: ${channelId}`,
+            `你的 ID: ${senderId ?? "unknown"}`,
+            `顯示名: ${senderName ?? "unknown"}`,
+            `權限: ${senderLevel}`,
+          ].join("\n");
+          log.info(`whoami query from ${senderId} on ${channelId}`);
+          return {
+            prependContext: `<atomic-memory-action action="whoami">\nUser asked for their identity. Reply with this info:\n${whoamiInfo}\n</atomic-memory-action>`,
+          };
         }
 
         // ── Self-awareness: inject capability context when asked ─────────
@@ -279,6 +298,7 @@ function registerHooks(state: PluginState): void {
           identityLinks: crossPlatformEnabled ? identityLinks : undefined,
           crossPlatformRecall: autoCrossPlatform || (crossPlatformEnabled && !!identityLinks),
           recallScopes: getRecallScopes(intentResult.intent),
+          workspaceDir: ctx.workspaceDir,
         });
 
         // ── Session state: record turn ─────────────────────────────────
@@ -721,7 +741,7 @@ async function handleForgetFlowAsync(
       if (candidate) {
         // Tiered permission check: non-owner/admin can only delete [臨] atoms they created
         if (cfg.permission.toolWriteRequiresOwner) {
-          const forgetLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds);
+          const forgetLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds, undefined, state.systemIdentity);
           if (!hasWriteAccess(forgetLevel)) {
             const targetAtom = await store.get(candidate.category as any, candidate.id);
             const createdBySender = targetAtom?.sources.some(s => s.senderId === senderId) ?? false;
@@ -793,7 +813,7 @@ async function handleForgetFlowAsync(
       if (forgetCandidates.length > 0) {
         // Tiered: non-owner/admin can only see [臨] atoms they created
         if (cfg.permission.toolWriteRequiresOwner) {
-          const fLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds);
+          const fLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds, undefined, state.systemIdentity);
           if (!hasWriteAccess(fLevel)) {
             forgetCandidates = forgetCandidates.filter((r: any) => {
               const atom = r.atom;
@@ -1000,7 +1020,7 @@ function registerTools(state: PluginState): void {
       async execute(_toolCallId: string, params: unknown) {
         // Permission check: owner or admin can store memories
         if (cfg.permission.toolWriteRequiresOwner) {
-          const toolLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds);
+          const toolLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, undefined, state.systemIdentity);
           if (!hasWriteAccess(toolLevel)) {
             return {
               content: [{ type: "text", text: "Permission denied: only the manager or admin can store memories." }],
@@ -1087,7 +1107,7 @@ function registerTools(state: PluginState): void {
         // Permission: tiered forget — owner/admin can delete anything,
         // regular user can only delete [臨] atoms they created.
         const forgetLevel = resolvePermissionLevel(
-          toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds,
+          toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, undefined, state.systemIdentity,
         );
 
         const { query, atomRef, archive = true } = params as {
@@ -1245,7 +1265,7 @@ function registerTools(state: PluginState): void {
         displayName: Type.Optional(Type.String({ description: "Display name on the target platform" })),
       }),
       async execute(_toolCallId: string, params: unknown) {
-        const linkLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds);
+        const linkLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, undefined, state.systemIdentity);
         if (cfg.permission.toolWriteRequiresOwner && !hasWriteAccess(linkLevel)) {
           return {
             content: [{ type: "text", text: "Permission denied: only the manager or admin can link identities." }],
@@ -1758,7 +1778,16 @@ const atomicMemoryPlugin = {
         askedCleanup: false,
       },
       runtimeAdminIds: [],
+      systemIdentity: null,
     };
+
+    // Load System.Owner.json identity registry (non-blocking)
+    loadSystemIdentity(cfg.systemIdentityPath).then(identity => {
+      state.systemIdentity = identity;
+      if (identity) {
+        log.info(`System.Owner.json loaded: bot="${identity.bot.displayName}", owner="${identity.owner.displayName}", platforms=${Object.keys(identity.owner.platforms).join(",")}`);
+      }
+    }).catch(() => { /* ignore — fallback to config */ });
 
     // Load runtime admin IDs (non-blocking — will be available by first hook call)
     loadRuntimeAdmins(resolvedStorePath).then(ids => {

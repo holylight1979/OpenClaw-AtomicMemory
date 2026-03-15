@@ -66,11 +66,12 @@ export function formatAtomicMemoriesContext(
 
   for (const recalled of atoms) {
     const { atom, score } = recalled;
-    const label = CATEGORY_LABELS[atom.category] ?? atom.category;
+    const isWorkspace = recalled.source === "workspace";
+    const label = isWorkspace ? "workspace" : (CATEGORY_LABELS[atom.category] ?? atom.category);
     const evLog = atom.evolutionLog;
     const lastEvolution = evLog && evLog.length > 0 ? evLog[evLog.length - 1] : undefined;
     const sourceMatch = lastEvolution?.match(/\(([^)]+)\)\s*—/);
-    const source = sourceMatch?.[1] ?? "shared";
+    const source = isWorkspace ? "workspace" : (sourceMatch?.[1] ?? "shared");
     // Source platform tag: show which channel(s) this atom came from
     const platformChannels = atom.sources.length > 0
       ? [...new Set(atom.sources.map(s => s.channel))]

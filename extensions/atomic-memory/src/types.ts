@@ -131,6 +131,8 @@ export type RecalledAtom = {
   score: number;
   /** Which chunks matched. */
   matchedChunks: VectorResult[];
+  /** Source of this result: "atom" (default) or "workspace" (from daily files). */
+  source?: "atom" | "workspace";
 };
 
 // ============================================================================

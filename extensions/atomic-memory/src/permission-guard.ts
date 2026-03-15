@@ -11,7 +11,105 @@
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import type { AtomicMemoryConfig } from "../config.js";
+
+// ============================================================================
+// System Identity Registry (System.Owner.json)
+// ============================================================================
+
+export type PlatformOwnerEntry = {
+  userId: string;
+  displayName?: string;
+  auto?: boolean;
+};
+
+export type PlatformBotEntry = {
+  botUserId: string;
+};
+
+export type SystemIdentity = {
+  version: number;
+  owner: {
+    displayName: string;
+    platforms: Record<string, PlatformOwnerEntry>;
+  };
+  bot: {
+    displayName: string;
+    platforms: Record<string, PlatformBotEntry>;
+  };
+  admins: Array<{ userId: string; platform?: string; displayName?: string }>;
+};
+
+const DEFAULT_IDENTITY_PATH = join(homedir(), ".openclaw", "System.Owner.json");
+
+/** Cached identity — loaded once per plugin lifecycle. */
+let cachedIdentity: SystemIdentity | null = null;
+let identityLoadedPath: string | null = null;
+
+/**
+ * Load System.Owner.json identity registry.
+ * Returns null if file doesn't exist or is malformed.
+ * Caches result — call `invalidateSystemIdentityCache()` to force reload.
+ */
+export async function loadSystemIdentity(identityPath?: string): Promise<SystemIdentity | null> {
+  const filePath = identityPath ?? DEFAULT_IDENTITY_PATH;
+  if (cachedIdentity && identityLoadedPath === filePath) return cachedIdentity;
+  try {
+    const raw = await readFile(filePath, "utf-8");
+    const data = JSON.parse(raw) as SystemIdentity;
+    if (!data.owner || !data.bot) return null;
+    cachedIdentity = data;
+    identityLoadedPath = filePath;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+/** Save updated identity back to System.Owner.json (e.g. after probe auto-fill). */
+export async function saveSystemIdentity(identity: SystemIdentity, identityPath?: string): Promise<void> {
+  const filePath = identityPath ?? DEFAULT_IDENTITY_PATH;
+  await writeFile(filePath, JSON.stringify(identity, null, 2), "utf-8");
+  cachedIdentity = identity;
+  identityLoadedPath = filePath;
+}
+
+/** Invalidate cache to force reload on next call. */
+export function invalidateSystemIdentityCache(): void {
+  cachedIdentity = null;
+  identityLoadedPath = null;
+}
+
+/**
+ * Check if a senderId matches the owner for a given channel/platform.
+ * Checks System.Owner.json platforms first, then falls back to senderIsOwner boolean.
+ */
+export function isOwnerByIdentity(
+  senderId: string | undefined,
+  channel: string | undefined,
+  identity: SystemIdentity | null,
+): boolean {
+  if (!senderId || !channel || !identity) return false;
+  const platformEntry = identity.owner.platforms[channel];
+  if (!platformEntry) return false;
+  if (platformEntry.auto) return false; // gateway — handled by scope, not ID match
+  return platformEntry.userId === senderId && platformEntry.userId.length > 0;
+}
+
+/**
+ * Check if a senderId is in the admin list (System.Owner.json).
+ */
+export function isAdminByIdentity(
+  senderId: string | undefined,
+  channel: string | undefined,
+  identity: SystemIdentity | null,
+): boolean {
+  if (!senderId || !identity || !identity.admins.length) return false;
+  return identity.admins.some(a =>
+    a.userId === senderId && (!a.platform || a.platform === channel),
+  );
+}
 
 // ============================================================================
 // Permission Levels
@@ -21,19 +119,25 @@ export type PermissionLevel = "owner" | "admin" | "user";
 
 /**
  * Resolve the effective permission level for a sender.
- * Owner is determined by the platform (ctx.senderIsOwner).
- * Admin is determined by config adminIds + runtime admin list.
+ * Owner: platform senderIsOwner flag OR System.Owner.json platform match.
+ * Admin: config adminIds + runtime admin list + System.Owner.json admins.
  */
 export function resolvePermissionLevel(
   senderId: string | undefined,
   senderIsOwner: boolean | undefined,
   cfg: AtomicMemoryConfig,
   runtimeAdminIds?: string[],
+  channel?: string,
+  identity?: SystemIdentity | null,
 ): PermissionLevel {
   if (senderIsOwner === true) return "owner";
+  // System.Owner.json platform-aware owner check
+  if (identity && isOwnerByIdentity(senderId, channel, identity)) return "owner";
   if (!senderId) return "user";
+  // Admin check: config + runtime + System.Owner.json
   const allAdminIds = [...cfg.permission.adminIds, ...(runtimeAdminIds ?? [])];
   if (allAdminIds.includes(senderId)) return "admin";
+  if (isAdminByIdentity(senderId, channel, identity ?? null)) return "admin";
   return "user";
 }
 
@@ -73,10 +177,11 @@ export function detectSettingCommand(prompt: string): string | null {
  * Build the static self-awareness system prompt.
  * Injected via before_prompt_build → appendSystemContext (cached by provider).
  * Target: 30-50 tokens.
+ * Reads from System.Owner.json if available, falls back to config.permission.
  */
-export function buildSelfAwarenessPrompt(cfg: AtomicMemoryConfig): string {
-  const botLabel = cfg.permission.botName || "this bot";
-  const ownerLabel = cfg.permission.ownerName || "the configured owner";
+export function buildSelfAwarenessPrompt(cfg: AtomicMemoryConfig, identity?: SystemIdentity | null): string {
+  const botLabel = identity?.bot?.displayName || cfg.permission.botName || "this bot";
+  const ownerLabel = identity?.owner?.displayName || cfg.permission.ownerName || "the configured owner";
 
   return (
     `[Identity] You are ${botLabel}, managed by ${ownerLabel}. ` +
