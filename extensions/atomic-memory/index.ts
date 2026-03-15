@@ -10,7 +10,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { OpenClawPluginApi } from "openclaw/plugin-sdk/atomic-memory";
+import type { OpenClawPluginApi, OpenClawPluginToolFactory, OpenClawPluginToolContext } from "openclaw/plugin-sdk/atomic-memory";
 import { chunkAtom } from "./src/atom-parser.js";
 import { AtomStore } from "./src/atom-store.js";
 import { CaptureEngine } from "./src/capture-engine.js";
@@ -749,9 +749,9 @@ function handleTestSessionCheck(
 function registerTools(state: PluginState): void {
   const { cfg, store, vectors, recall, capture, log, api } = state;
 
-  // atom_recall — manual search
+  // atom_recall — manual search (factory: receives sender context for isolation)
   api.registerTool(
-    {
+    ((toolCtx: OpenClawPluginToolContext) => ({
       name: "atom_recall",
       label: "Atom Recall",
       description:
@@ -767,14 +767,21 @@ function registerTools(state: PluginState): void {
         ),
         limit: Type.Optional(Type.Number({ description: "Max results (default: 5)" })),
       }),
-      async execute(_toolCallId, params) {
+      async execute(_toolCallId: string, params: unknown) {
         const { query, category, limit = 5 } = params as {
           query: string;
           category?: AtomCategory;
           limit?: number;
         };
 
-        const results = await recall.search(query, { topK: limit });
+        const results = await recall.search(query, {
+          topK: limit,
+          senderId: toolCtx.requesterSenderId,
+          channel: toolCtx.messageChannel,
+          isolationMode: cfg.memoryIsolation,
+          atomStorePath: cfg.atomStorePath,
+          actrWeight: cfg.actr.weight,
+        });
         const filtered = category
           ? results.filter((r) => r.atom.category === category)
           : results;
@@ -807,13 +814,13 @@ function registerTools(state: PluginState): void {
           },
         };
       },
-    },
+    })) as OpenClawPluginToolFactory,
     { name: "atom_recall" },
   );
 
-  // atom_store — manual store
+  // atom_store — manual store (factory: receives sender context for source tracking)
   api.registerTool(
-    {
+    ((toolCtx: OpenClawPluginToolContext) => ({
       name: "atom_store",
       label: "Atom Store",
       description:
@@ -833,7 +840,7 @@ function registerTools(state: PluginState): void {
           }),
         ),
       }),
-      async execute(_toolCallId, params) {
+      async execute(_toolCallId: string, params: unknown) {
         const {
           text,
           category,
@@ -869,7 +876,10 @@ function registerTools(state: PluginState): void {
           };
         }
 
-        const atom = await store.findOrCreate(category, { text, category, confidence });
+        const sourceOpts = toolCtx.requesterSenderId
+          ? { channel: toolCtx.messageChannel ?? "unknown", senderId: toolCtx.requesterSenderId }
+          : undefined;
+        const atom = await store.findOrCreate(category, { text, category, confidence }, sourceOpts);
         const chunks = chunkAtom(atom);
         if (chunks.length > 0) {
           await vectors.index(chunks);
@@ -883,13 +893,13 @@ function registerTools(state: PluginState): void {
           details: { action: "created", ref: `${category}/${atom.id}` },
         };
       },
-    },
+    })) as OpenClawPluginToolFactory,
     { name: "atom_store" },
   );
 
-  // atom_forget — delete/archive
+  // atom_forget — delete/archive (factory: receives sender context for isolation)
   api.registerTool(
-    {
+    ((toolCtx: OpenClawPluginToolContext) => ({
       name: "atom_forget",
       label: "Atom Forget",
       description:
@@ -903,7 +913,7 @@ function registerTools(state: PluginState): void {
           Type.Boolean({ description: "Archive instead of hard-delete (default: true)" }),
         ),
       }),
-      async execute(_toolCallId, params) {
+      async execute(_toolCallId: string, params: unknown) {
         const { query, atomRef, archive = true } = params as {
           query?: string;
           atomRef?: string;
@@ -951,7 +961,13 @@ function registerTools(state: PluginState): void {
         }
 
         if (query) {
-          const results = await recall.search(query, { topK: 5, minScore: 0.3 });
+          const results = await recall.search(query, {
+            topK: 5,
+            minScore: 0.3,
+            senderId: toolCtx.requesterSenderId,
+            channel: toolCtx.messageChannel,
+            isolationMode: cfg.memoryIsolation,
+          });
           if (results.length === 0) {
             return {
               content: [{ type: "text", text: "No matching atoms found." }],
@@ -1010,7 +1026,7 @@ function registerTools(state: PluginState): void {
           details: { error: "missing_param" },
         };
       },
-    },
+    })) as OpenClawPluginToolFactory,
     { name: "atom_forget" },
   );
 }
