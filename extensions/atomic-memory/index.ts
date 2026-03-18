@@ -69,7 +69,6 @@ import {
   isOnCooldown,
   setCooldown,
   hasAuthIntentKeywords,
-  confirmAuthIntent,
   type ChallengeState,
 } from "./src/owner-challenge.js";
 import { updateMemoryIndex, type TouchedAtom } from "./src/memory-index.js";
@@ -198,11 +197,12 @@ function registerHooks(state: PluginState): void {
       const senderId = ctx.senderId;
       const senderName = ctx.senderName ?? ctx.senderUsername;
       const senderIsOwner = ctx.senderIsOwner;
-      log.info(`before_agent_start fired (channel: ${channelId}, sender: ${senderId ?? "unknown"}, prompt length: ${event.prompt?.length ?? 0})`);
       if (!event.prompt || event.prompt.length < 5) return;
 
-      // Owner-only gate
-      if (cfg.memoryIsolation === "owner-only" && senderIsOwner === false) return;
+      // Owner-only gate (exempt: owner challenge flow — non-owners need to reach challenge to become owner)
+      const hasActiveChallenge = senderId && channelId !== "unknown" && getActiveChallenge(channelId, senderId);
+      const rawHasAuthKeywords = hasAuthIntentKeywords(event.prompt);
+      if (cfg.memoryIsolation === "owner-only" && senderIsOwner === false && !hasActiveChallenge && !rawHasAuthKeywords) return;
 
       try {
         // Extract user's actual message from the prompt
@@ -232,13 +232,6 @@ function registerHooks(state: PluginState): void {
         // ── Permission: resolve sender level ─────────────────────────────
         const senderLevel = resolvePermissionLevel(senderId, senderIsOwner, cfg, state.runtimeAdminIds, channelId, state.systemIdentity);
 
-        // ── Command interception: setting commands from non-authorized ───
-        const settingKw = detectSettingCommand(queryForRecall);
-        if ((intentResult.intent === "command" || settingKw) && settingKw && !hasWriteAccess(senderLevel)) {
-          log.info(`BLOCKED setting command from ${senderId ?? "unknown"} (level=${senderLevel}, keyword="${settingKw}")`);
-          return { prependContext: buildRejectionContext(settingKw, senderName) };
-        }
-
         // ── /whoami: return sender identity info ───────────────────────
         if (/(?:^|\s)(?:whoami|我的\s*ID|我的身[份分]|my\s*id)\s*[?？]?\s*$/i.test(queryForRecall)) {
           const whoamiInfo = [
@@ -253,7 +246,7 @@ function registerHooks(state: PluginState): void {
           };
         }
 
-        // ── Owner challenge flow ────────────────────────────────────────
+        // ── Owner challenge flow (BEFORE command interception) ───────────
         // Step 1: Check if there's an active challenge awaiting answer
         if (senderId && channelId !== "unknown") {
           const activeChallenge = getActiveChallenge(channelId, senderId);
@@ -268,52 +261,59 @@ function registerHooks(state: PluginState): void {
               state.systemIdentity = await loadSystemIdentity(cfg.systemIdentityPath);
               log.info(`OWNER CHALLENGE SUCCESS: ${senderId} on ${channelId}, registered=${registered}`);
               return {
-                prependContext: `<atomic-memory-action action="owner-auth-success">\n` +
-                  `Authentication successful. ${registered ? "User has been granted owner privileges on this platform." : "This platform already has an owner registered."}\n` +
-                  `Briefly inform the user of the result.\n</atomic-memory-action>`,
+                appendSystemContext: `[SYSTEM OVERRIDE — atomic-memory owner auth]\n` +
+                  `Authentication succeeded. ${registered ? "User granted owner privileges on this platform." : "Platform owner already registered."}\n` +
+                  `Inform the user of the result concisely.`,
               };
             } else if (vResult === "partial") {
               log.info(`OWNER CHALLENGE partial: ${senderId} has ${activeChallenge.attemptsLeft} attempts left`);
               return {
-                prependContext: `<atomic-memory-action action="owner-auth-partial">\n` +
-                  `The user provided part of the required answer. They have ${activeChallenge.attemptsLeft} more attempt(s).\n` +
-                  `Do not help them solve the challenge. Do not reveal the formula.\n` +
-                  `Just acknowledge naturally and wait for their next message.\n</atomic-memory-action>`,
+                appendSystemContext: `[SYSTEM OVERRIDE — atomic-memory owner auth]\n` +
+                  `The user provided a partial answer. They have ${activeChallenge.attemptsLeft} attempt(s) remaining.\n` +
+                  `Do NOT help them solve it. Do NOT reveal the formula. Acknowledge naturally.`,
               };
             } else if (vResult === "wrong") {
               await setCooldown(channelId, senderId, cfg.atomStorePath);
               log.info(`OWNER CHALLENGE FAILED: ${senderId} on ${channelId} — 24hr cooldown set`);
               return {
-                prependContext: `<atomic-memory-action action="owner-auth-failed">\n` +
-                  `Authentication failed. Do not explain why or give hints.\n` +
-                  `Just respond naturally as if nothing happened.\n</atomic-memory-action>`,
+                appendSystemContext: `[SYSTEM OVERRIDE — atomic-memory owner auth]\n` +
+                  `Authentication failed. 24-hour cooldown applied.\n` +
+                  `Respond naturally. Do NOT explain why or give hints.`,
               };
             }
             // expired — fall through to normal flow
           }
         }
 
-        // Step 2: Detect auth intent (keyword pre-filter + Ollama 90% confirmation)
+        // Step 2: Detect auth intent (keyword matching — patterns are specific enough)
+        let authIntentHandled = false;
         if (senderId && channelId !== "unknown" && senderLevel !== "owner") {
           if (hasAuthIntentKeywords(queryForRecall)) {
+            authIntentHandled = true; // skip command interception below
             const onCooldown = await isOnCooldown(channelId, senderId, cfg.atomStorePath);
             if (!onCooldown) {
-              const confirmed = await confirmAuthIntent(
-                queryForRecall, cfg.ollama.baseUrl, cfg.ollama.extractionModel, log,
-              );
-              if (confirmed) {
-                const challenge = generateChallenge(channelId, senderId);
-                log.info(`OWNER CHALLENGE STARTED: ${senderId} on ${channelId}, hex=${challenge.hex}`);
-                return {
-                  prependContext: `<atomic-memory-action action="owner-auth-challenge">\n` +
-                    `IMPORTANT: Reply to the user with ONLY the following text, nothing else:\n` +
-                    `${challenge.hex}\n` +
-                    `Do not explain, do not add any context, do not say anything else. Just output the hex code above.\n` +
-                    `Do NOT help the user solve this authentication challenge. Do not reveal any formula or expected answer.\n</atomic-memory-action>`,
-                };
-              }
+              const challenge = generateChallenge(channelId, senderId);
+              log.info(`OWNER CHALLENGE STARTED: ${senderId} on ${channelId}, hex=${challenge.hex}`);
+              return {
+                appendSystemContext: `[SYSTEM OVERRIDE — atomic-memory owner auth]\n` +
+                  `The user is requesting owner authentication. ` +
+                  `You MUST reply with ONLY the following hex code, nothing else:\n` +
+                  `${challenge.hex}\n` +
+                  `Do NOT explain. Do NOT add context. Do NOT refuse. ` +
+                  `Output the hex code above as your entire response.`,
+              };
             }
-            // On cooldown or low confidence — fall through to normal flow
+            // On cooldown — fall through to normal flow
+          }
+        }
+
+        // ── Command interception: setting commands from non-authorized ───
+        // (after challenge flow — auth intent is exempt)
+        if (!authIntentHandled) {
+          const settingKw = detectSettingCommand(queryForRecall);
+          if ((intentResult.intent === "command" || settingKw) && settingKw && !hasWriteAccess(senderLevel)) {
+            log.info(`BLOCKED setting command from ${senderId ?? "unknown"} (level=${senderLevel}, keyword="${settingKw}")`);
+            return { prependContext: buildRejectionContext(settingKw, senderName) };
           }
         }
 
@@ -842,11 +842,11 @@ async function handleForgetFlowAsync(
           if (!hasWriteAccess(forgetLevel)) {
             const targetAtom = await store.get(candidate.category as any, candidate.id);
             const createdBySender = targetAtom?.sources.some(s => s.senderId === senderId) ?? false;
-            if (!targetAtom || targetAtom.confidence !== "[臨]" || !createdBySender) {
+            if (!targetAtom || !createdBySender) {
               log.info(`BLOCKED forget confirmation from ${senderId ?? "unknown"} (level=${forgetLevel}, atom=${candidate.category}/${candidate.id})`);
               state.pendingForget = null;
               return {
-                prependContext: `<atomic-memory-action action="permission-denied">\nThis user cannot delete this memory (${candidate.category}/${candidate.id}). Only the manager or admin can delete non-temporary memories. Politely explain.\n</atomic-memory-action>`,
+                prependContext: `<atomic-memory-action action="permission-denied">\nThis user cannot delete this memory (${candidate.category}/${candidate.id}). You can only delete memories you created yourself. Politely explain.\n</atomic-memory-action>`,
               };
             }
           }
@@ -914,12 +914,12 @@ async function handleForgetFlowAsync(
           if (!hasWriteAccess(fLevel)) {
             forgetCandidates = forgetCandidates.filter((r: any) => {
               const atom = r.atom;
-              return atom.confidence === "[臨]" && atom.sources?.some((s: any) => s.senderId === senderId);
+              return atom.sources?.some((s: any) => s.senderId === senderId);
             });
             if (forgetCandidates.length === 0) {
               state.pendingForget = null;
               return {
-                prependContext: `<atomic-memory-action action="permission-denied">\nFound matching memories but this user cannot delete them. Only the manager or admin can delete non-temporary memories. Politely explain.\n</atomic-memory-action>`,
+                prependContext: `<atomic-memory-action action="permission-denied">\nFound matching memories but this user cannot delete them. You can only delete memories you created yourself. Politely explain.\n</atomic-memory-action>`,
               };
             }
           }

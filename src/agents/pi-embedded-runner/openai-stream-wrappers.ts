@@ -330,18 +330,6 @@ export function createOpenAIServiceTierWrapper(
       if (payloadObj.service_tier === undefined) {
         payloadObj.service_tier = serviceTier;
       }
-    const originalOnPayload = options?.onPayload;
-    return underlying(model, context, {
-      ...options,
-      onPayload: (payload) => {
-        if (payload && typeof payload === "object") {
-          const payloadObj = payload as Record<string, unknown>;
-          if (payloadObj.service_tier === undefined) {
-            payloadObj.service_tier = serviceTier;
-          }
-        }
-        return originalOnPayload?.(payload);
-      },
     });
   };
 }
