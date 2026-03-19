@@ -277,7 +277,11 @@ export const atomicMemoryConfigSchema = {
         enabled: boolOrDefault(crossPlatformRaw.enabled, true),
         autoMerge: boolOrDefault(crossPlatformRaw.autoMerge, true),
       },
-      systemIdentityPath: strOrDefault(cfg.systemIdentityPath, join(homedir(), ".openclaw", "System.Owner.json")),
+      systemIdentityPath: strOrDefault(
+        cfg.systemIdentityPath,
+        // Derive from atomStorePath base (same .openclaw root) instead of homedir()
+        join(strOrDefault(cfg.atomStorePath, DEFAULT_ATOM_STORE_PATH), "..", "..", "System.Owner.json"),
+      ),
     };
   },
 

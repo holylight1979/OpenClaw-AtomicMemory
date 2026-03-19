@@ -180,9 +180,13 @@ function registerHooks(state: PluginState): void {
   // ──────────────────────────────────────────────────────────────────────────
 
   if (cfg.permission.botSelfAwareness) {
-    api.on("before_prompt_build", (_event, _ctx) => {
+    api.on("before_prompt_build", (_event, ctx) => {
+      const level = resolvePermissionLevel(
+        ctx.senderId, ctx.senderIsOwner, cfg,
+        state.runtimeAdminIds, ctx.channelId, state.systemIdentity,
+      );
       return {
-        appendSystemContext: buildSelfAwarenessPrompt(cfg, state.systemIdentity),
+        appendSystemContext: buildSelfAwarenessPrompt(cfg, state.systemIdentity, level),
       };
     });
   }
@@ -462,7 +466,8 @@ function registerHooks(state: PluginState): void {
 
         if (atoms.length === 0) {
           log.info(`recall returned 0 atoms for channel ${channelId}`);
-          const noRecallContext = [wisdomInject, blindSpotSuffix, capabilityCtx, mergeSuffix, testCheckSuffix].filter(Boolean).join("");
+
+        const noRecallContext = [wisdomInject, blindSpotSuffix, capabilityCtx, mergeSuffix, testCheckSuffix].filter(Boolean).join("");
           if (noRecallContext) {
             return { prependContext: noRecallContext.trim() };
           }
@@ -1117,7 +1122,7 @@ function registerTools(state: PluginState): void {
       async execute(_toolCallId: string, params: unknown) {
         // Permission check: owner or admin can store memories
         if (cfg.permission.toolWriteRequiresOwner) {
-          const toolLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, undefined, state.systemIdentity);
+          const toolLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, toolCtx.messageChannel, state.systemIdentity);
           if (!hasWriteAccess(toolLevel)) {
             return {
               content: [{ type: "text", text: "Permission denied: only the manager or admin can store memories." }],
@@ -1204,7 +1209,7 @@ function registerTools(state: PluginState): void {
         // Permission: tiered forget — owner/admin can delete anything,
         // regular user can only delete [臨] atoms they created.
         const forgetLevel = resolvePermissionLevel(
-          toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, undefined, state.systemIdentity,
+          toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, toolCtx.messageChannel, state.systemIdentity,
         );
 
         const { query, atomRef, archive = true } = params as {
@@ -1362,7 +1367,7 @@ function registerTools(state: PluginState): void {
         displayName: Type.Optional(Type.String({ description: "Display name on the target platform" })),
       }),
       async execute(_toolCallId: string, params: unknown) {
-        const linkLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, undefined, state.systemIdentity);
+        const linkLevel = resolvePermissionLevel(toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, toolCtx.messageChannel, state.systemIdentity);
         if (cfg.permission.toolWriteRequiresOwner && !hasWriteAccess(linkLevel)) {
           return {
             content: [{ type: "text", text: "Permission denied: only the manager or admin can link identities." }],
