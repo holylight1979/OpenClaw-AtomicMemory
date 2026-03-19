@@ -458,7 +458,7 @@ function registerHooks(state: PluginState): void {
         // Test cleanup suffix
         const testCount = store.countTestAtoms();
         const testCheckSuffix = testCount > 0 && !state.testSession.active
-          ? `\n\n<atomic-memory-action action="test-session-check">\nNote: There are ${testCount} test memory items pending cleanup. When appropriate, naturally ask if the memory test is done and whether to clean up. Keep it brief.\n</atomic-memory-action>`
+          ? `\n\n<atomic-memory-action action="test-session-check">\nNote: There are ${testCount} test memory items pending cleanup. When appropriate, naturally ask if the memory test is done and whether to clean up. Keep it brief. If the user confirms cleanup, use the atom_clear_test tool to clear them.\n</atomic-memory-action>`
           : "";
 
         // Blind-spot context suffix
@@ -970,9 +970,7 @@ function handleTestSessionCheck(
   const { store, log } = state;
   const { testSession } = state;
 
-  if (!testSession.active) return undefined;
-
-  const cleanupConfirm = /(是|好|對|ok|yes|清理|清除|清掉|結束測試|結束了|測試完|clean)/i;
+  const cleanupConfirm = /(是|好|對|ok|yes|清理|清除|清掉|結束測試|結束了|測試完|clean|刪掉|清除測試)/i;
   const TEST_CONTENT_PATTERNS = [
     /測試(碼|驗證碼|資料|用的)/,
     /test\s*(code|data|token|key|value)/i,
@@ -980,6 +978,21 @@ function handleTestSessionCheck(
     /^XTEST|^ABC\d{3}|MEMORY-OK/i,
   ];
 
+  // ── Stale test atoms from previous sessions (not active) ──
+  // User confirms cleanup via natural language → clear immediately
+  if (!testSession.active) {
+    const testCount = store.countTestAtoms();
+    if (testCount > 0 && cleanupConfirm.test(queryForRecall.trim())) {
+      const cleared = store.clearTestAtoms();
+      log.info(`stale test atoms cleaned up (${cleared} items, confirmed by user)`);
+      return {
+        prependContext: `<atomic-memory-action action="test-cleanup-done">\nCleared ${cleared} stale test memories from a previous session. Confirm to the user that test data has been cleaned up.\n</atomic-memory-action>`,
+      };
+    }
+    return undefined;
+  }
+
+  // ── Active test session ──
   // If we already asked about cleanup
   if (testSession.askedCleanup) {
     const hasTestIntent = TEST_CONTENT_PATTERNS.some((p) => p.test(queryForRecall));
@@ -1351,6 +1364,45 @@ function registerTools(state: PluginState): void {
       },
     })) as OpenClawPluginToolFactory,
     { name: "atom_forget" },
+  );
+
+  // atom_clear_test — clear stale test atoms (owner/admin only)
+  api.registerTool(
+    ((toolCtx: OpenClawPluginToolContext) => ({
+      name: "atom_clear_test",
+      label: "Clear Test Memories",
+      description:
+        "Clear all test memory items from the _test/ area. Use when the user asks to clean up test memories, or when stale test data is pending cleanup. Owner/admin only.",
+      parameters: Type.Object({}),
+      async execute() {
+        if (cfg.permission.toolWriteRequiresOwner) {
+          const level = resolvePermissionLevel(
+            toolCtx.requesterSenderId, toolCtx.senderIsOwner, cfg, state.runtimeAdminIds, toolCtx.messageChannel, state.systemIdentity,
+          );
+          if (!hasWriteAccess(level)) {
+            return {
+              content: [{ type: "text", text: "Permission denied: only owner/admin can clear test memories." }],
+              details: { error: "permission_denied" },
+            };
+          }
+        }
+        const count = store.countTestAtoms();
+        if (count === 0) {
+          return {
+            content: [{ type: "text", text: "No test memories to clear." }],
+            details: { cleared: 0 },
+          };
+        }
+        const cleared = store.clearTestAtoms();
+        state.testSession = { active: false, factCount: 0, lastTestTurn: 0, currentTurn: state.testSession.currentTurn, askedCleanup: false };
+        log.info(`atom_clear_test tool cleared ${cleared} test atoms`);
+        return {
+          content: [{ type: "text", text: `Cleared ${cleared} test memories.` }],
+          details: { cleared },
+        };
+      },
+    })) as OpenClawPluginToolFactory,
+    { name: "atom_clear_test" },
   );
 
   // atom_link — cross-platform person identity linking
