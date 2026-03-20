@@ -149,6 +149,7 @@ function toNativeCommandSpec(command: ChatCommandDefinition, provider?: string):
     description: command.description,
     acceptsArgs: Boolean(command.acceptsArgs),
     args: command.args,
+    permissionLevel: command.permissionLevel,
   };
 }
 

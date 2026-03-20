@@ -13,7 +13,7 @@ import {
   type ComponentData,
   type StringSelectMenuInteraction,
 } from "@buape/carbon";
-import { ApplicationCommandOptionType, ButtonStyle } from "discord-api-types/v10";
+import { ApplicationCommandOptionType, ButtonStyle, PermissionFlagsBits } from "discord-api-types/v10";
 import {
   ensureConfiguredAcpRouteReady,
   resolveConfiguredAcpRoute,
@@ -1235,12 +1235,24 @@ export function createDiscordNativeCommand(params: {
         ] satisfies CommandOptions)
       : undefined;
 
+  // Map permissionLevel to Discord's default_member_permissions via Carbon's permission property.
+  // owner → Administrator (only server admins see the command)
+  // admin → ManageGuild (users with Manage Server permission see it)
+  // user/guest → undefined (all members see it)
+  const discordPermission =
+    command.permissionLevel === "owner"
+      ? PermissionFlagsBits.Administrator
+      : command.permissionLevel === "admin"
+        ? PermissionFlagsBits.ManageGuild
+        : undefined;
+
   return new (class extends Command {
     name = command.name;
     description = command.description;
     defer = true;
     ephemeral = ephemeralDefault;
     options = options;
+    permission = discordPermission;
 
     async run(interaction: CommandInteraction) {
       const commandArgs = argDefinitions?.length

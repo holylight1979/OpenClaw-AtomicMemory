@@ -118,38 +118,24 @@ Phase 2C: LINE Rich Menu 分層（1 session）
 7. ✅ `native-command.ts`：Discord dispatch ephemeral 拒絕 + `loadSystemIdentity()` 傳入 identity
 8. ✅ gateway operator (`operator.admin` scope) → `senderIsOwner = true` → owner level
 
-### Phase 2B — Discord Command Visibility
+### Phase 2B — Discord Command Visibility ✅ (2026-03-21)
 
 **目標**：非 owner/admin 用戶看不到無權限的 slash commands。
 
-**Discord 原生機制**：
-- `defaultMemberPermissions`：設定指令需要的 Discord Permission（如 `ADMINISTRATOR`）
-- Server Settings → Integrations → 可 per-role/per-channel override
+**已完成**：
 
-**實作方式**：
+1. ✅ `commands-registry.types.ts`：NativeCommandSpec 加 `permissionLevel?: PermissionLevel`
+2. ✅ `commands-registry.ts`：toNativeCommandSpec() 從 ChatCommandDefinition 傳入 permissionLevel
+3. ✅ `native-command.ts`：createDiscordNativeCommand() 讀取 NativeCommandSpec.permissionLevel，透過 Carbon `Command.permission` 屬性映射：
+   - owner → `PermissionFlagsBits.Administrator`（只有 Discord 管理員可見）
+   - admin → `PermissionFlagsBits.ManageGuild`（有 Manage Server 權限可見）
+   - user/guest → `undefined`（全員可見）
 
-1. **native-command.ts** 的 `createDiscordNativeCommand()`：
+**設計決策**：計畫原訂 owner 用 `"0"`（字面零 → 無人可見），但 Carbon `serialize()` 對 `0n`（falsy）序列化為 `null`（全員可見），無法達成目的。改用 `Administrator` 效果更佳 — server admin（通常 = owner）自動看到，不需手動到 Integrations 設定。
 
-   ```typescript
-   // owner 指令 → 需要 ADMINISTRATOR permission
-   if (spec.permissionLevel === "owner") {
-     command.defaultMemberPermissions = "0"; // 只 server admin 可見
-   } else if (spec.permissionLevel === "admin") {
-     command.defaultMemberPermissions = "MANAGE_GUILD"; // 管理員可見
-   }
-   // user/guest → 不設定（全員可見）
-   ```
+**雙層保障**：Discord 原生 permission 控制可見性 + Phase 2A server-side gating 硬性攔截，兩層獨立運作。
 
-2. **NativeCommandSpec 擴展**：傳入 `permissionLevel` 供 builder 使用
-
-3. **Server 端設定**：owner 在 Discord Server Settings → Integrations → OpenClaw Bot → 指定哪些 role 可用哪些指令（fine-grained override）
-
-**注意**：`defaultMemberPermissions` 是 Discord 原生機制，Server admin 可在 UI override。建議 owner-level 指令設成最嚴格（"0" = 沒有人可見），再由 server admin 手動指定可用 role。
-
-**替代方案（更精細）**：Guild Command Permission API v2
-- 需要 `applications.commands.permissions.update` scope
-- 可以 per-command per-role/per-user 設定
-- 但較複雜，建議先用 `defaultMemberPermissions` 方案
+**DM 指令**：不受影響 — Discord DM 無 guild permission 概念，`defaultMemberPermissions` 只影響 guild 內可見性。
 
 ### Phase 2C — LINE Rich Menu 分層 ✅ (2026-03-21)
 
@@ -455,50 +441,47 @@ Agent commit → GitHub Actions trigger
 
 ---
 
-## 九、Phase 3 執P Prompt（Self-Evolution 基礎）
+## 九、Phase 3 實作完成（Self-Evolution 基礎）— 2026-03-21
 
-```
-# Phase 3 — Self-Evolution 基礎
+> **狀態：✅ 已完成**（基礎設施層，Phase 5 工具套件將建構於此之上）
 
-## 目標
-建立 owner 授權的自我迭代基礎能力：Agent 能讀取自身原始碼、修改、build、test、commit。
+### 實作內容
 
-## 改動清單
+#### 1. Exec SafeBins 預授權 ✅
+- `openclaw.json` → `tools.exec.safeBins`: `["pnpm", "git", "tsc"]`
+- 每個 binary 都有 `safeBinProfiles` 限制（deniedFlags 含 `--force`, `--no-verify`, `--hard` 等危險旗標）
 
-### 1. Workspace 設定
-- openclaw.json: tools.workspace 包含 OpenClaw 原始碼目錄
-- 或確認 gateway 啟動時 cwd 已是 OpenClaw 根目錄
+#### 2. Config 擴展 ✅
+- `config.ts` → `selfIteration.codeModification` 新增子設定：
+  - `enabled` (default: false — opt-in)
+  - `sourceDir` — OpenClaw 原始碼根目錄
+  - `allowedPaths` (default: `["extensions/", "skills/", "_AIDocs/"]`)
+  - `blockedPaths` (default: `["src/gateway/", "src/config/", ".env", "System.Owner.json"]`)
+  - `maxFilesPerPass` / `maxLinesPerPass` — 單次改動上限
+  - `requireBuildPass` / `autoRevertOnFailure` — build 安全機制
 
-### 2. Exec SafeBins 預授權
-- openclaw.json: tools.exec.safeBins 加入：
-  - pnpm（build/test）
-  - git（status/add/commit/push）
-  - tsc（型別檢查）
-- 其餘 exec 仍需 owner approve
+#### 3. Evolve Guard 模組 ✅
+- 新檔：`extensions/atomic-memory/src/evolve-guard.ts`
+- `validateEvolvePath()` — 單檔白/黑名單驗證
+- `validateEvolveBatch()` — 批次驗證 + 檔案數/行數上限
+- `canTriggerEvolution()` — owner-only 權限檢查
+- `buildEvolveGuardContext()` — 注入 agent system prompt
+- `createJournalEntry()` / `formatJournalMarkdown()` — 迭代日誌
 
-### 3. Scope 限制 — 建立 evolve guard
-- 新檔：extensions/atomic-memory/src/evolve-guard.ts
-- 白名單目錄：extensions/、skills/、_AIDocs/
-- 黑名單：src/gateway/、src/config/、.env、System.Owner.json
-- write/edit tool hook：檢查目標路徑是否在白名單內
+#### 4. Plugin 整合 ✅
+- `index.ts` → `before_prompt_build` hook：owner 登入且 `codeModification.enabled` 時自動注入 evolve guard context
+- types.ts 新增：`EvolvePathVerdict`, `EvolveBatchVerdict`, `EvolvePassStats`, `EvolveJournalEntry`
 
-### 4. 流程驗證
-- Owner 透過 chat 下令「改善 atomic-memory 的 recall scoring 邏輯」
-- Agent 讀取 recall-engine.ts → 分析 → 提出計畫 → 等待 owner 確認
-- Owner 確認 → Agent 修改 → exec pnpm build → exec pnpm test
-- 測試通過 → exec git commit → 通知 owner
-- Owner 確認 → exec gateway restart
+#### 5. 安全設計
+- 黑名單優先於白名單（blockedPaths 先檢查）
+- 路徑逃逸偵測（`../` 被拒絕）
+- git `--force` / `--no-verify` / `--hard` 被 safeBinProfile 擋住
+- `enabled: false` 預設 — 必須 owner 明確啟用
 
-### 5. 迭代知識存儲
-- 每次 self-evolution 結果存入 atom（類型：project, 含 diff 摘要 + 測試結果）
-- 跨 session 累積改善知識
+### 尚未實作（留給 Phase 5）
+- `self_analyze` / `self_propose` / `self_apply` / `self_journal` 四個工具
+- 實際的 build→test→commit→revert pipeline
+- 流程驗證端到端測試
 
-## 驗證
-- 非 owner 無法觸發 self-evolution 流程
-- 修改被限制在白名單目錄
-- build 失敗時自動 revert（git checkout -- <files>）
-- 修改記錄可在後續 session 查詢
-
-## 前置
-- Phase 2A 已完成（permissionLevel enforcement）
-```
+### 前置
+- Phase 2A 已完成（permissionLevel enforcement） ✅

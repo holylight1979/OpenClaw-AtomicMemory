@@ -72,6 +72,7 @@ export type NativeCommandSpec = {
   description: string;
   acceptsArgs: boolean;
   args?: CommandArgDefinition[];
+  permissionLevel?: PermissionLevel;
 };
 
 export type CommandNormalizeOptions = {
