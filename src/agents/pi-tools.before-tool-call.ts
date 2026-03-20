@@ -2,6 +2,7 @@ import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
 import type { SessionState } from "../logging/diagnostic-session-state.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
+import { checkToolCallSensitivity } from "../security/sensitive-filter.js";
 import { isPlainObject } from "../utils.js";
 import { normalizeToolName } from "./tool-policy.js";
 import type { AnyAgentTool } from "./tools/common.js";
@@ -13,6 +14,8 @@ export type HookContext = {
   sessionId?: string;
   runId?: string;
   loopDetection?: ToolLoopDetectionConfig;
+  /** Whether the sender is an owner (for sensitive-filter gating). */
+  senderIsOwner?: boolean;
 };
 
 type HookOutcome = { blocked: true; reason: string } | { blocked: false; params: unknown };
@@ -96,6 +99,16 @@ export async function runBeforeToolCallHook(args: {
 }): Promise<HookOutcome> {
   const toolName = normalizeToolName(args.toolName || "tool");
   const params = args.params;
+
+  // --- Sensitive path interception (core-level, before all plugin hooks) ---
+  const sensitiveCheck = checkToolCallSensitivity(
+    toolName,
+    params,
+    args.ctx?.senderIsOwner === true,
+  );
+  if (sensitiveCheck.blocked) {
+    return { blocked: true, reason: sensitiveCheck.reason };
+  }
 
   if (args.ctx?.sessionKey) {
     const { getDiagnosticSessionState, logToolLoopAction, detectToolCallLoop, recordToolCall } =

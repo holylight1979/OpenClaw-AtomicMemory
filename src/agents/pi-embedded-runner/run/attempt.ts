@@ -75,6 +75,11 @@ import { resolveSandboxContext } from "../../sandbox.js";
 import { resolveSandboxRuntimeStatus } from "../../sandbox/runtime-status.js";
 import { isXaiProvider } from "../../schema/clean-for-xai.js";
 import { repairSessionFileIfNeeded } from "../../session-file-repair.js";
+import {
+  registerSessionSender,
+  unregisterSessionSender,
+  loadSecurityConfig,
+} from "../../../security/sensitive-filter.js";
 import { guardSessionManager } from "../../session-tool-result-guard-wrapper.js";
 import { sanitizeToolUseResultPairing } from "../../session-transcript-repair.js";
 import {
@@ -1740,6 +1745,12 @@ export async function runEmbeddedAttempt(
       });
 
       await prewarmSessionFile(params.sessionFile);
+      // Register session sender for sensitive content filtering before guard setup.
+      if (params.sessionKey) {
+        registerSessionSender(params.sessionKey, params.senderIsOwner === true);
+        loadSecurityConfig(params.config?.security);
+      }
+
       sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
         agentId: sessionAgentId,
         sessionKey: params.sessionKey,
@@ -2875,6 +2886,10 @@ export async function runEmbeddedAttempt(
       });
       session?.dispose();
       releaseWsSession(params.sessionId);
+      // Clean up sensitive filter session registration.
+      if (params.sessionKey) {
+        unregisterSessionSender(params.sessionKey);
+      }
       await sessionLock.release();
     }
   } finally {

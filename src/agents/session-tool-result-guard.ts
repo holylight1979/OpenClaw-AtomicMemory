@@ -13,6 +13,15 @@ import { createPendingToolCallState } from "./session-tool-result-state.js";
 import { makeMissingToolResult, sanitizeToolCallInputs } from "./session-transcript-repair.js";
 import { extractToolCallsFromAssistant, extractToolResultId } from "./tool-call-id.js";
 
+/**
+ * Callback for core-level sensitive content filtering.
+ * Applied BEFORE plugin hooks — cannot be bypassed.
+ */
+export type SensitiveContentFilterFn = (
+  message: AgentMessage,
+  meta: { toolName?: string; role: string },
+) => AgentMessage;
+
 const GUARD_TRUNCATION_SUFFIX =
   "\n\n⚠️ [Content truncated during persistence — original exceeded size limit. " +
   "Use offset/limit parameters or request specific sections for large content.]";
@@ -101,6 +110,11 @@ export function installSessionToolResultGuard(
     beforeMessageWriteHook?: (
       event: PluginHookBeforeMessageWriteEvent,
     ) => PluginHookBeforeMessageWriteResult | undefined;
+    /**
+     * Core-level sensitive content filter applied BEFORE plugin hooks.
+     * Cannot be bypassed by plugins or prompt injection.
+     */
+    sensitiveContentFilter?: SensitiveContentFilterFn;
   },
 ): {
   flushPendingToolResults: () => void;
@@ -124,6 +138,7 @@ export function installSessionToolResultGuard(
 
   const allowSyntheticToolResults = opts?.allowSyntheticToolResults ?? true;
   const beforeWrite = opts?.beforeMessageWriteHook;
+  const sensitiveFilter = opts?.sensitiveContentFilter;
 
   /**
    * Run the before_message_write hook. Returns the (possibly modified) message,
@@ -196,8 +211,12 @@ export function installSessionToolResultGuard(
       // Apply hard size cap before persistence to prevent oversized tool results
       // from consuming the entire context window on subsequent LLM calls.
       const capped = capToolResultSize(persistMessage(normalizedToolResult));
+      // Core-level sensitive content filter — applied BEFORE plugin hooks (unbypassable).
+      const sensitiveFiltered = sensitiveFilter
+        ? sensitiveFilter(capped, { toolName, role: "toolResult" })
+        : capped;
       const persisted = applyBeforeWriteHook(
-        persistToolResult(capped, {
+        persistToolResult(sensitiveFiltered, {
           toolCallId: id ?? undefined,
           toolName,
           isSynthetic: false,
@@ -235,7 +254,11 @@ export function installSessionToolResultGuard(
       flushPendingToolResults();
     }
 
-    const finalMessage = applyBeforeWriteHook(persistMessage(nextMessage));
+    // Core-level sensitive content filter for assistant messages (LLM output last defense).
+    const sensitiveFilteredMsg = sensitiveFilter
+      ? sensitiveFilter(persistMessage(nextMessage), { role: nextRole as string })
+      : persistMessage(nextMessage);
+    const finalMessage = applyBeforeWriteHook(sensitiveFilteredMsg);
     if (!finalMessage) {
       return undefined;
     }

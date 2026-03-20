@@ -299,12 +299,13 @@ Agent commit → GitHub Actions trigger
 
 | Phase | 目標 | 預估 Sessions | 前置 |
 |-------|------|--------------|------|
-| **2A** | Core permissionLevel enforcement | 1 | — |
-| **2B** | Discord command visibility（defaultMemberPermissions） | 1 | 2A |
-| **2C** | LINE Rich Menu 分層 | 1 | 2A |
-| **3** | Self-evolution 基礎（workspace scope + safeBins + 流程驗證） | 2 | 2A |
-| **4** | `/evolve` Skill 封裝 | 1-2 | 3 |
-| **5** | External CI/CD pipeline | 2-3 | 4（可選） |
+| **2A** | Core permissionLevel enforcement | 1 | — | ✅ 完成 |
+| **2.5** | 敏感資訊過濾（安全核心） | 1 | 2A | ✅ 完成 |
+| **2B** | Discord command visibility（defaultMemberPermissions） | 1 | 2A | |
+| **2C** | LINE Rich Menu 分層 | 1 | 2A | |
+| **3** | Self-evolution 基礎（workspace scope + safeBins + 流程驗證） | 2 | 2A+2.5 | |
+| **4** | `/evolve` Skill 封裝 | 1-2 | 3 | |
+| **5** | External CI/CD pipeline | 2-3 | 4（可選） | |
 
 ### Phase 2A 的可選前置：統一 permission resolution
 
