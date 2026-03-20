@@ -1,11 +1,12 @@
 import fs from "node:fs/promises";
 import { resetAcpSessionInPlace } from "../../acp/persistent-bindings.js";
+import { hasMinLevel } from "../../channels/permission-level.js";
 import { logVerbose } from "../../globals.js";
 import { createInternalHookEvent, triggerInternalHook } from "../../hooks/internal-hooks.js";
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
 import { isAcpSessionKey, resolveAgentIdFromSessionKey } from "../../routing/session-key.js";
 import { resolveSendPolicy } from "../../sessions/send-policy.js";
-import { shouldHandleTextCommands } from "../commands-registry.js";
+import { findCommandByTextAlias, shouldHandleTextCommands } from "../commands-registry.js";
 import { handleAcpCommand } from "./commands-acp.js";
 import { resolveBoundAcpThreadSessionKey } from "./commands-acp/targets.js";
 import { handleAllowlistCommand } from "./commands-allowlist.js";
@@ -299,6 +300,25 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
     surface: params.command.surface,
     commandSource: params.ctx.CommandSource,
   });
+
+  // Permission level gate: check sender's level against command's required level
+  const senderLevel = params.command.senderPermissionLevel ?? "user";
+  const commandAlias = params.command.commandBodyNormalized.match(/^(\/\S+)/)?.[1];
+  if (commandAlias) {
+    const cmdDef = findCommandByTextAlias(commandAlias);
+    const requiredLevel = cmdDef?.permissionLevel ?? "user";
+    if (!hasMinLevel(senderLevel, requiredLevel)) {
+      logVerbose(
+        `Permission denied: ${params.command.senderId || "<unknown>"} (${senderLevel}) attempted ${commandAlias} (requires ${requiredLevel})`,
+      );
+      return {
+        shouldContinue: false,
+        reply: {
+          text: `⛔ This command requires **${requiredLevel}** permission. Your level: **${senderLevel}**.`,
+        },
+      };
+    }
+  }
 
   for (const handler of HANDLERS) {
     const result = await handler(params, allowTextCommands);

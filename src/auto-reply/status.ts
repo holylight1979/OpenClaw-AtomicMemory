@@ -11,6 +11,7 @@ import { resolveSandboxRuntimeStatus } from "../agents/sandbox.js";
 import type { SkillCommandSpec } from "../agents/skills.js";
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../agents/usage.js";
 import { resolveChannelModelOverride } from "../channels/model-overrides.js";
+import { hasMinLevel } from "../channels/permission-level.js";
 import { isCommandFlagEnabled } from "../config/commands.js";
 import type { OpenClawConfig } from "../config/config.js";
 import {
@@ -760,6 +761,8 @@ const COMMANDS_PER_PAGE = 8;
 export type CommandsMessageOptions = {
   page?: number;
   surface?: string;
+  /** When set, only show commands the sender has permission to use. */
+  senderPermissionLevel?: import("../channels/permission-level.js").PermissionLevel;
 };
 
 export type CommandsMessageResult = {
@@ -789,7 +792,11 @@ function formatCommandEntry(command: ChatCommandDefinition): string {
     });
   const aliasLabel = aliases.length ? ` (${aliases.join(", ")})` : "";
   const scopeLabel = command.scope === "text" ? " [text]" : "";
-  return `${primary}${aliasLabel}${scopeLabel} - ${command.description}`;
+  const levelLabel =
+    command.permissionLevel && command.permissionLevel !== "user"
+      ? ` [${command.permissionLevel}]`
+      : "";
+  return `${primary}${aliasLabel}${scopeLabel}${levelLabel} - ${command.description}`;
 }
 
 type CommandsListItem = {
@@ -862,9 +869,13 @@ export function buildCommandsMessagePaginated(
   const surface = options?.surface?.toLowerCase();
   const isTelegram = surface === "telegram";
 
-  const commands = cfg
+  const senderLevel = options?.senderPermissionLevel;
+  let commands = cfg
     ? listChatCommandsForConfig(cfg, { skillCommands })
     : listChatCommands({ skillCommands });
+  if (senderLevel) {
+    commands = commands.filter((cmd) => hasMinLevel(senderLevel, cmd.permissionLevel ?? "user"));
+  }
   const pluginCommands = listPluginCommands();
   const items = buildCommandItems(commands, pluginCommands);
 

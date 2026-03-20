@@ -2,116 +2,51 @@
  * Permission Guard — Bot self-awareness, command interception, and role checks.
  *
  * Provides:
- * - Permission level resolution (owner > admin > user)
+ * - Permission level resolution (owner > admin > user > guest)
  * - Setting-command detection (keyword matching)
  * - Self-awareness system prompt generation
  * - Per-user capability description
  * - Runtime admin list management (persistent JSON)
+ *
+ * Core types and identity functions are shared via src/channels/permission-level.ts.
+ * This module re-exports them and adds plugin-specific logic.
  */
 
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { homedir } from "node:os";
 import type { AtomicMemoryConfig } from "../config.js";
 
+// Re-export shared types and functions from core
+export type {
+  PermissionLevel,
+  SystemIdentity,
+  PlatformOwnerEntry,
+  PlatformBotEntry,
+  PermissionLevelResolveParams,
+} from "openclaw/plugin-sdk/permission-level";
+
+export {
+  hasMinLevel,
+  getLevelValue,
+  loadSystemIdentity,
+  saveSystemIdentity,
+  invalidateSystemIdentityCache,
+  isOwnerByIdentity,
+  isAdminByIdentity,
+  resolveEffectivePermissionLevel,
+} from "openclaw/plugin-sdk/permission-level";
+
+import type { PermissionLevel, SystemIdentity } from "openclaw/plugin-sdk/permission-level";
+import {
+  loadSystemIdentity,
+  saveSystemIdentity,
+  isOwnerByIdentity,
+  isAdminByIdentity,
+} from "openclaw/plugin-sdk/permission-level";
+
 // ============================================================================
-// System Identity Registry (System.Owner.json)
+// Owner Registration (plugin-specific — uses loadSystemIdentity from core)
 // ============================================================================
-
-export type PlatformOwnerEntry = {
-  userId: string;
-  displayName?: string;
-  auto?: boolean;
-  /** ISO date when owner was authenticated via challenge on this platform. */
-  authenticatedAt?: string;
-};
-
-export type PlatformBotEntry = {
-  botUserId: string;
-};
-
-export type SystemIdentity = {
-  version: number;
-  owner: {
-    displayName: string;
-    platforms: Record<string, PlatformOwnerEntry>;
-  };
-  bot: {
-    displayName: string;
-    platforms: Record<string, PlatformBotEntry>;
-  };
-  admins: Array<{ userId: string; platform?: string; displayName?: string }>;
-};
-
-const DEFAULT_IDENTITY_PATH = join(homedir(), ".openclaw", "System.Owner.json");
-
-/** Cached identity — loaded once per plugin lifecycle. */
-let cachedIdentity: SystemIdentity | null = null;
-let identityLoadedPath: string | null = null;
-
-/**
- * Load System.Owner.json identity registry.
- * Returns null if file doesn't exist or is malformed.
- * Caches result — call `invalidateSystemIdentityCache()` to force reload.
- */
-export async function loadSystemIdentity(identityPath?: string): Promise<SystemIdentity | null> {
-  const filePath = identityPath ?? DEFAULT_IDENTITY_PATH;
-  if (cachedIdentity && identityLoadedPath === filePath) return cachedIdentity;
-  try {
-    const raw = await readFile(filePath, "utf-8");
-    const data = JSON.parse(raw) as SystemIdentity;
-    if (!data.owner || !data.bot) return null;
-    cachedIdentity = data;
-    identityLoadedPath = filePath;
-    return data;
-  } catch {
-    return null;
-  }
-}
-
-/** Save updated identity back to System.Owner.json (e.g. after probe auto-fill). */
-export async function saveSystemIdentity(identity: SystemIdentity, identityPath?: string): Promise<void> {
-  const filePath = identityPath ?? DEFAULT_IDENTITY_PATH;
-  await writeFile(filePath, JSON.stringify(identity, null, 2), "utf-8");
-  cachedIdentity = identity;
-  identityLoadedPath = filePath;
-}
-
-/** Invalidate cache to force reload on next call. */
-export function invalidateSystemIdentityCache(): void {
-  cachedIdentity = null;
-  identityLoadedPath = null;
-}
-
-/**
- * Check if a senderId matches the owner for a given channel/platform.
- * Checks System.Owner.json platforms first, then falls back to senderIsOwner boolean.
- */
-export function isOwnerByIdentity(
-  senderId: string | undefined,
-  channel: string | undefined,
-  identity: SystemIdentity | null,
-): boolean {
-  if (!senderId || !channel || !identity) return false;
-  const platformEntry = identity.owner.platforms[channel];
-  if (!platformEntry) return false;
-  if (platformEntry.auto) return false; // gateway — handled by scope, not ID match
-  return platformEntry.userId === senderId && platformEntry.userId.length > 0;
-}
-
-/**
- * Check if a senderId is in the admin list (System.Owner.json).
- */
-export function isAdminByIdentity(
-  senderId: string | undefined,
-  channel: string | undefined,
-  identity: SystemIdentity | null,
-): boolean {
-  if (!senderId || !identity || !identity.admins.length) return false;
-  return identity.admins.some(a =>
-    a.userId === senderId && (!a.platform || a.platform === channel),
-  );
-}
 
 /**
  * Register a sender as owner on a specific platform.
@@ -124,10 +59,8 @@ export async function registerOwnerPlatform(
   displayName: string | undefined,
   identityPath?: string,
 ): Promise<boolean> {
-  const filePath = identityPath ?? DEFAULT_IDENTITY_PATH;
-  let identity = await loadSystemIdentity(filePath);
+  let identity = await loadSystemIdentity(identityPath);
   if (!identity) {
-    // Bootstrap a new identity file
     identity = {
       version: 2,
       owner: { displayName: displayName || "", platforms: {} },
@@ -136,39 +69,34 @@ export async function registerOwnerPlatform(
     };
   }
 
-  // Check if platform already has an owner (locked)
   const existing = identity.owner.platforms[channel];
   if (existing && existing.userId && existing.userId.length > 0 && !existing.auto) {
-    return false; // already registered — locked
+    return false;
   }
 
-  // Add this platform identity
   identity.owner.platforms[channel] = {
     userId: senderId,
     displayName: displayName || "",
     authenticatedAt: new Date().toISOString(),
   };
 
-  // Set top-level displayName if empty
   if (!identity.owner.displayName && displayName) {
     identity.owner.displayName = displayName;
   }
 
   identity.version = 2;
-  await saveSystemIdentity(identity, filePath);
+  await saveSystemIdentity(identity, identityPath);
   return true;
 }
 
 // ============================================================================
-// Permission Levels
+// Plugin-specific Permission Resolution
 // ============================================================================
 
-export type PermissionLevel = "owner" | "admin" | "user";
-
 /**
- * Resolve the effective permission level for a sender.
- * Owner: platform senderIsOwner flag OR System.Owner.json platform match.
- * Admin: config adminIds + runtime admin list + System.Owner.json admins.
+ * Resolve the effective permission level for a sender (plugin-layer).
+ * Adds admin detection via AtomicMemoryConfig.adminIds + runtime admins + System.Owner.json.
+ * Core layer (command-auth.ts) provides owner/user/guest; this refines with admin.
  */
 export function resolvePermissionLevel(
   senderId: string | undefined,
@@ -179,10 +107,8 @@ export function resolvePermissionLevel(
   identity?: SystemIdentity | null,
 ): PermissionLevel {
   if (senderIsOwner === true) return "owner";
-  // System.Owner.json platform-aware owner check
   if (identity && isOwnerByIdentity(senderId, channel, identity)) return "owner";
   if (!senderId) return "user";
-  // Admin check: config + runtime + System.Owner.json
   const allAdminIds = [...cfg.permission.adminIds, ...(runtimeAdminIds ?? [])];
   if (allAdminIds.includes(senderId)) return "admin";
   if (isAdminByIdentity(senderId, channel, identity ?? null)) return "admin";
@@ -198,17 +124,9 @@ export function hasWriteAccess(level: PermissionLevel): boolean {
 // Setting Command Detection
 // ============================================================================
 
-/**
- * Keywords that indicate a setting/admin command.
- * Split into CJK and Latin patterns for precision.
- */
 const SETTING_KEYWORDS_CJK = /(?:設定|開啟|關閉|重置|清除所有|管理|權限|管理員)/;
 const SETTING_KEYWORDS_LATIN = /\b(?:admin|config|setting|reset|permission|clear\s*all)\b/i;
 
-/**
- * Detect if a prompt contains a setting/admin command intent.
- * Returns the matched keyword for logging, or null if no match.
- */
 export function detectSettingCommand(prompt: string): string | null {
   const cjkMatch = prompt.match(SETTING_KEYWORDS_CJK);
   if (cjkMatch) return cjkMatch[0];
@@ -221,12 +139,6 @@ export function detectSettingCommand(prompt: string): string | null {
 // Self-Awareness Prompt
 // ============================================================================
 
-/**
- * Build the static self-awareness system prompt.
- * Injected via before_prompt_build → appendSystemContext (cached by provider).
- * Target: 30-50 tokens.
- * Reads from System.Owner.json if available, falls back to config.permission.
- */
 export function buildSelfAwarenessPrompt(
   cfg: AtomicMemoryConfig,
   identity?: SystemIdentity | null,
@@ -242,7 +154,7 @@ export function buildSelfAwarenessPrompt(
     senderLine +
     `[Identity] You are ${botLabel}, managed by ${ownerLabel}. ` +
     "Only the manager (and designated admins) can modify settings and manage memories. " +
-    "Other users can chat and query memories.\n" +
+    "Other users can chat and query memories. Guests must request access first.\n" +
     "[Self-awareness rules]\n" +
     `- Asked "who are you" → answer with your name and role.\n` +
     `- Asked "who is your owner/manager" → answer: ${ownerLabel}.\n` +
@@ -254,10 +166,6 @@ export function buildSelfAwarenessPrompt(
   );
 }
 
-/**
- * Build a per-sender capability description for injection into context.
- * Used when the user asks "what can I do".
- */
 export function buildCapabilityContext(level: PermissionLevel): string {
   switch (level) {
     case "owner":
@@ -266,6 +174,8 @@ export function buildCapabilityContext(level: PermissionLevel): string {
       return "[Sender:admin] Can chat, recall, store and forget memories. Cannot change settings or manage admins.";
     case "user":
       return "[Sender:user] Can chat and query memories. Cannot store, delete, or change settings.";
+    case "guest":
+      return "[Sender:guest] Unverified user. Can only view basic info (/help, /status) and request access. Cannot chat or use advanced features.";
   }
 }
 
@@ -273,10 +183,6 @@ export function buildCapabilityContext(level: PermissionLevel): string {
 // Command Interception Context
 // ============================================================================
 
-/**
- * Build a rejection context line for unauthorized setting commands.
- * Injected into prependContext so the bot naturally declines.
- */
 export function buildRejectionContext(keyword: string, senderName?: string): string {
   const who = senderName || "this user";
   return (
@@ -299,10 +205,6 @@ type RuntimeAdminData = {
   updatedAt: string;
 };
 
-/**
- * Load runtime admin IDs from persistent JSON.
- * Returns empty array if file doesn't exist.
- */
 export async function loadRuntimeAdmins(atomStorePath: string): Promise<string[]> {
   try {
     const filePath = join(atomStorePath, PERMISSION_DIR, ADMINS_FILE);
@@ -314,9 +216,6 @@ export async function loadRuntimeAdmins(atomStorePath: string): Promise<string[]
   }
 }
 
-/**
- * Save runtime admin IDs to persistent JSON.
- */
 export async function saveRuntimeAdmins(atomStorePath: string, adminIds: string[]): Promise<void> {
   const dirPath = join(atomStorePath, PERMISSION_DIR);
   await mkdir(dirPath, { recursive: true });
@@ -327,9 +226,6 @@ export async function saveRuntimeAdmins(atomStorePath: string, adminIds: string[
   await writeFile(join(dirPath, ADMINS_FILE), JSON.stringify(data, null, 2), "utf-8");
 }
 
-/**
- * Add an admin ID to the runtime list. Returns true if actually added (not duplicate).
- */
 export async function addRuntimeAdmin(atomStorePath: string, userId: string): Promise<boolean> {
   const current = await loadRuntimeAdmins(atomStorePath);
   if (current.includes(userId)) return false;
@@ -338,9 +234,6 @@ export async function addRuntimeAdmin(atomStorePath: string, userId: string): Pr
   return true;
 }
 
-/**
- * Remove an admin ID from the runtime list. Returns true if actually removed.
- */
 export async function removeRuntimeAdmin(atomStorePath: string, userId: string): Promise<boolean> {
   const current = await loadRuntimeAdmins(atomStorePath);
   const idx = current.indexOf(userId);

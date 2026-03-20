@@ -1,4 +1,5 @@
 import { listChannelDocks } from "../channels/dock.js";
+import type { PermissionLevel } from "../channels/permission-level.js";
 import { getActivePluginRegistry } from "../plugins/runtime.js";
 import { COMMAND_ARG_FORMATTERS } from "./commands-args.js";
 import type {
@@ -21,6 +22,7 @@ type DefineChatCommandInput = {
   textAliases?: string[];
   scope?: CommandScope;
   category?: CommandCategory;
+  permissionLevel?: PermissionLevel;
 };
 
 function defineChatCommand(command: DefineChatCommandInput): ChatCommandDefinition {
@@ -43,6 +45,7 @@ function defineChatCommand(command: DefineChatCommandInput): ChatCommandDefiniti
     textAliases: aliases,
     scope,
     category: command.category,
+    permissionLevel: command.permissionLevel,
   };
 }
 
@@ -136,6 +139,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Show available commands.",
       textAlias: "/help",
       category: "status",
+      permissionLevel: "guest",
     }),
     defineChatCommand({
       key: "commands",
@@ -143,6 +147,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "List all slash commands.",
       textAlias: "/commands",
       category: "status",
+      permissionLevel: "guest",
     }),
     defineChatCommand({
       key: "skill",
@@ -171,6 +176,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Show current status.",
       textAlias: "/status",
       category: "status",
+      permissionLevel: "guest",
     }),
     defineChatCommand({
       key: "allowlist",
@@ -179,6 +185,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       acceptsArgs: true,
       scope: "text",
       category: "management",
+      permissionLevel: "owner",
     }),
     defineChatCommand({
       key: "approve",
@@ -187,6 +194,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       textAlias: "/approve",
       acceptsArgs: true,
       category: "management",
+      permissionLevel: "owner",
     }),
     defineChatCommand({
       key: "context",
@@ -269,6 +277,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Show your sender id.",
       textAlias: "/whoami",
       category: "status",
+      permissionLevel: "guest",
     }),
     defineChatCommand({
       key: "session",
@@ -276,6 +285,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Manage session-level settings (for example /session idle).",
       textAlias: "/session",
       category: "session",
+      permissionLevel: "admin",
       args: [
         {
           name: "action",
@@ -298,6 +308,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "List, kill, log, spawn, or steer subagent runs for this session.",
       textAlias: "/subagents",
       category: "management",
+      permissionLevel: "admin",
       args: [
         {
           name: "action",
@@ -325,6 +336,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Manage ACP sessions and runtime options.",
       textAlias: "/acp",
       category: "management",
+      permissionLevel: "admin",
       args: [
         {
           name: "action",
@@ -366,6 +378,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
         "Bind this thread (Discord) or topic/conversation (Telegram) to a session target.",
       textAlias: "/focus",
       category: "management",
+      permissionLevel: "admin",
       args: [
         {
           name: "target",
@@ -381,6 +394,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Remove the current thread (Discord) or topic/conversation (Telegram) binding.",
       textAlias: "/unfocus",
       category: "management",
+      permissionLevel: "admin",
     }),
     defineChatCommand({
       key: "agents",
@@ -388,6 +402,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "List thread-bound agents for this session.",
       textAlias: "/agents",
       category: "management",
+      permissionLevel: "admin",
     }),
     defineChatCommand({
       key: "kill",
@@ -395,6 +410,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Kill a running subagent (or all).",
       textAlias: "/kill",
       category: "management",
+      permissionLevel: "admin",
       args: [
         {
           name: "target",
@@ -410,6 +426,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Send guidance to a running subagent.",
       textAlias: "/steer",
       category: "management",
+      permissionLevel: "admin",
       args: [
         {
           name: "target",
@@ -430,6 +447,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Show or set config values.",
       textAlias: "/config",
       category: "management",
+      permissionLevel: "owner",
       args: [
         {
           name: "action",
@@ -458,6 +476,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Set runtime debug overrides.",
       textAlias: "/debug",
       category: "management",
+      permissionLevel: "owner",
       args: [
         {
           name: "action",
@@ -509,6 +528,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Restart OpenClaw.",
       textAlias: "/restart",
       category: "tools",
+      permissionLevel: "owner",
     }),
     defineChatCommand({
       key: "activation",
@@ -516,6 +536,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Set group activation mode.",
       textAlias: "/activation",
       category: "management",
+      permissionLevel: "admin",
       args: [
         {
           name: "mode",
@@ -532,6 +553,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Set send policy.",
       textAlias: "/send",
       category: "management",
+      permissionLevel: "admin",
       args: [
         {
           name: "mode",
@@ -643,6 +665,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Toggle elevated mode.",
       textAlias: "/elevated",
       category: "options",
+      permissionLevel: "admin",
       args: [
         {
           name: "mode",
@@ -659,6 +682,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Set exec defaults for this session.",
       textAlias: "/exec",
       category: "options",
+      permissionLevel: "owner",
       args: [
         {
           name: "host",
@@ -693,6 +717,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Show or set the model.",
       textAlias: "/model",
       category: "options",
+      permissionLevel: "admin",
       args: [
         {
           name: "model",
@@ -709,6 +734,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       argsParsing: "none",
       acceptsArgs: true,
       category: "options",
+      permissionLevel: "admin",
     }),
     defineChatCommand({
       key: "queue",
@@ -716,6 +742,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       description: "Adjust queue settings.",
       textAlias: "/queue",
       category: "options",
+      permissionLevel: "admin",
       args: [
         {
           name: "mode",
@@ -749,6 +776,7 @@ function buildChatCommands(): ChatCommandDefinition[] {
       textAlias: "/bash",
       scope: "text",
       category: "tools",
+      permissionLevel: "owner",
       args: [
         {
           name: "command",

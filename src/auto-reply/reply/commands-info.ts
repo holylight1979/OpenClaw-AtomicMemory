@@ -50,10 +50,12 @@ export const handleCommandsListCommand: CommandHandler = async (params, allowTex
     });
   const surface = params.ctx.Surface;
 
+  const senderPermissionLevel = params.command.senderPermissionLevel;
   if (surface === "telegram") {
     const result = buildCommandsMessagePaginated(params.cfg, skillCommands, {
       page: 1,
       surface,
+      senderPermissionLevel,
     });
 
     if (result.totalPages > 1) {
@@ -82,7 +84,7 @@ export const handleCommandsListCommand: CommandHandler = async (params, allowTex
 
   return {
     shouldContinue: false,
-    reply: { text: buildCommandsMessage(params.cfg, skillCommands, { surface }) },
+    reply: { text: buildCommandsMessage(params.cfg, skillCommands, { surface, senderPermissionLevel }) },
   };
 };
 

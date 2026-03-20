@@ -190,6 +190,14 @@ export function findCommandByNativeName(
   );
 }
 
+export function findCommandByTextAlias(alias: string): ChatCommandDefinition | undefined {
+  const map = getTextAliasMap();
+  const normalized = alias.trim().toLowerCase();
+  const spec = map.get(normalized);
+  if (!spec) return undefined;
+  return getChatCommands().find((cmd) => cmd.key === spec.key);
+}
+
 export function buildCommandText(commandName: string, args?: string): string {
   const trimmedArgs = args?.trim();
   return trimmedArgs ? `/${commandName} ${trimmedArgs}` : `/${commandName}`;

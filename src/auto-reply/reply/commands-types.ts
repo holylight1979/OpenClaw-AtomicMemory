@@ -1,5 +1,6 @@
 import type { BlockReplyChunking } from "../../agents/pi-embedded-block-chunker.js";
 import type { SkillCommandSpec } from "../../agents/skills.js";
+import type { PermissionLevel } from "../../channels/permission-level.js";
 import type { ChannelId } from "../../channels/plugins/types.js";
 import type { OpenClawConfig } from "../../config/config.js";
 import type { SessionEntry, SessionScope } from "../../config/sessions.js";
@@ -16,6 +17,7 @@ export type CommandContext = {
   ownerList: string[];
   senderIsOwner: boolean;
   isAuthorizedSender: boolean;
+  senderPermissionLevel?: PermissionLevel;
   senderId?: string;
   abortKey?: string;
   rawBodyNormalized: string;

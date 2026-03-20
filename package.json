@@ -148,6 +148,10 @@
       "types": "./dist/plugin-sdk/atomic-memory.d.ts",
       "default": "./dist/plugin-sdk/atomic-memory.js"
     },
+    "./plugin-sdk/permission-level": {
+      "types": "./dist/plugin-sdk/permission-level.d.ts",
+      "default": "./dist/plugin-sdk/permission-level.js"
+    },
     "./plugin-sdk/minimax-portal-auth": {
       "types": "./dist/plugin-sdk/minimax-portal-auth.d.ts",
       "default": "./dist/plugin-sdk/minimax-portal-auth.js"

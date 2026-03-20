@@ -41,6 +41,10 @@ import { resolveStoredModelOverride } from "../../../../src/auto-reply/reply/mod
 import { dispatchReplyWithDispatcher } from "../../../../src/auto-reply/reply/provider-dispatcher.js";
 import type { ReplyPayload } from "../../../../src/auto-reply/types.js";
 import { resolveCommandAuthorizedFromAuthorizers } from "../../../../src/channels/command-gating.js";
+import {
+  hasMinLevel,
+  resolveEffectivePermissionLevel,
+} from "../../../../src/channels/permission-level.js";
 import { resolveNativeCommandSessionTargets } from "../../../../src/channels/native-command-session-targets.js";
 import { createReplyPrefixOptions } from "../../../../src/channels/reply-prefix.js";
 import type { OpenClawConfig, loadConfig } from "../../../../src/config/config.js";
@@ -1502,6 +1506,24 @@ async function dispatchDiscordCommandInteraction(params: {
   if (isGroupDm && discordConfig?.dm?.groupEnabled === false) {
     await respond("Discord group DMs are disabled.");
     return;
+  }
+
+  // Permission level gate: check sender's level against command's required level
+  const requiredLevel = command.permissionLevel ?? "user";
+  if (requiredLevel !== "user") {
+    const senderPermissionLevel = resolveEffectivePermissionLevel({
+      senderIsOwner: ownerOk,
+      senderId: sender.id,
+      channel: "discord",
+      isInAllowlist: commandAuthorized,
+    });
+    if (!hasMinLevel(senderPermissionLevel, requiredLevel)) {
+      await respond(
+        `⛔ This command requires **${requiredLevel}** permission. Your level: **${senderPermissionLevel}**.`,
+        { ephemeral: true },
+      );
+      return;
+    }
   }
 
   const menu = resolveCommandArgMenu({

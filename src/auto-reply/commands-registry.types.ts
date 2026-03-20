@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../config/types.js";
+import type { PermissionLevel } from "../channels/permission-level.js";
 
 export type CommandScope = "text" | "native" | "both";
 
@@ -62,6 +63,8 @@ export type ChatCommandDefinition = {
   argsMenu?: CommandArgMenuSpec | "auto";
   scope: CommandScope;
   category?: CommandCategory;
+  /** Minimum permission level required to execute this command. Defaults to "user". */
+  permissionLevel?: PermissionLevel;
 };
 
 export type NativeCommandSpec = {

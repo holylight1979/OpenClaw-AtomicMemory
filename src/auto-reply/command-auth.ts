@@ -1,5 +1,7 @@
 import type { ChannelDock } from "../channels/dock.js";
 import { getChannelDock, listChannelDocks } from "../channels/dock.js";
+import type { PermissionLevel } from "../channels/permission-level.js";
+import { resolveEffectivePermissionLevel } from "../channels/permission-level.js";
 import type { ChannelId } from "../channels/plugins/types.js";
 import { normalizeAnyChannelId } from "../channels/registry.js";
 import type { OpenClawConfig } from "../config/config.js";
@@ -17,6 +19,7 @@ export type CommandAuthorization = {
   senderId?: string;
   senderIsOwner: boolean;
   isAuthorizedSender: boolean;
+  senderPermissionLevel: PermissionLevel;
   from?: string;
   to?: string;
 };
@@ -377,12 +380,23 @@ export function resolveCommandAuthorization(params: {
     isAuthorizedSender = commandAuthorized && isOwnerForCommands;
   }
 
+  // Resolve base permission level from core-layer information.
+  // This provides owner/user/guest. Plugin layer (permission-guard.ts)
+  // can further refine to add "admin" distinction via System.Owner.json.
+  const senderPermissionLevel = resolveEffectivePermissionLevel({
+    senderIsOwner,
+    senderId: senderId || undefined,
+    channel: providerId,
+    isInAllowlist: isAuthorizedSender,
+  });
+
   return {
     providerId,
     ownerList,
     senderId: senderId || undefined,
     senderIsOwner,
     isAuthorizedSender,
+    senderPermissionLevel,
     from: from || undefined,
     to: to || undefined,
   };
