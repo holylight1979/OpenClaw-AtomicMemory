@@ -312,3 +312,46 @@ export type OscillationReport = {
   shouldPause: boolean;
   reason: string;
 };
+
+// ============================================================================
+// Evolve Guard (Phase 3: Self-Evolution)
+// ============================================================================
+
+export type EvolvePathVerdict = {
+  allowed: boolean;
+  /** Normalized relative path (forward slashes). */
+  relativePath: string;
+  /** Reason for denial (empty if allowed). */
+  reason: string;
+};
+
+export type EvolveBatchVerdict = {
+  allowed: boolean;
+  /** Per-file verdicts. */
+  files: EvolvePathVerdict[];
+  /** Aggregate denial reasons. */
+  reasons: string[];
+};
+
+export type EvolvePassStats = {
+  filesModified: number;
+  linesAdded: number;
+  linesRemoved: number;
+};
+
+export type EvolveJournalEntry = {
+  /** ISO-8601 timestamp. */
+  timestamp: string;
+  /** What was changed (short description). */
+  summary: string;
+  /** Diff stats. */
+  stats: EvolvePassStats;
+  /** Build result: pass / fail / skipped. */
+  buildResult: "pass" | "fail" | "skipped";
+  /** Whether auto-reverted on failure. */
+  reverted: boolean;
+  /** Git commit hash (if committed). */
+  commitHash?: string;
+  /** Files touched (relative paths). */
+  filesTouched: string[];
+};

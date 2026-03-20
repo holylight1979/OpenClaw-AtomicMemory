@@ -86,6 +86,25 @@ export type AtomicMemoryConfig = {
     oscillationThreshold: number;
     /** Episodic count between periodic reviews. Default 25. */
     reviewInterval: number;
+    /** Code modification guard settings for self-evolution (Phase 3). */
+    codeModification: {
+      /** Enable code self-modification capability. Default false (opt-in). */
+      enabled: boolean;
+      /** Absolute path to the OpenClaw source root. Required when enabled. */
+      sourceDir: string;
+      /** Directories (relative to sourceDir) allowed for modification. */
+      allowedPaths: string[];
+      /** Directories/files (relative to sourceDir) blocked from modification. */
+      blockedPaths: string[];
+      /** Max files modifiable in a single evolution pass. Default 10. */
+      maxFilesPerPass: number;
+      /** Max total lines changed in a single evolution pass. Default 500. */
+      maxLinesPerPass: number;
+      /** Require build success before committing. Default true. */
+      requireBuildPass: boolean;
+      /** Auto-revert on build failure. Default true. */
+      autoRevertOnFailure: boolean;
+    };
   };
   permission: {
     /** Bot's display name for self-awareness (e.g. "小助手"). */
@@ -197,7 +216,11 @@ export const atomicMemoryConfigSchema = {
 
     // selfIteration sub-config
     const selfIterationRaw = (cfg.selfIteration ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(selfIterationRaw, ["enabled", "oscillationWindow", "oscillationThreshold", "reviewInterval"], "selfIteration config");
+    assertAllowedKeys(selfIterationRaw, ["enabled", "oscillationWindow", "oscillationThreshold", "reviewInterval", "codeModification"], "selfIteration config");
+
+    // selfIteration.codeModification sub-config
+    const codeModRaw = (selfIterationRaw.codeModification ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(codeModRaw, ["enabled", "sourceDir", "allowedPaths", "blockedPaths", "maxFilesPerPass", "maxLinesPerPass", "requireBuildPass", "autoRevertOnFailure"], "selfIteration.codeModification config");
 
     // permission sub-config
     const permissionRaw = (cfg.permission ?? {}) as Record<string, unknown>;
@@ -263,6 +286,20 @@ export const atomicMemoryConfigSchema = {
         oscillationWindow: numOrDefault(selfIterationRaw.oscillationWindow, 3, 1, 20),
         oscillationThreshold: numOrDefault(selfIterationRaw.oscillationThreshold, 2, 1, 10),
         reviewInterval: numOrDefault(selfIterationRaw.reviewInterval, 25, 1, 200),
+        codeModification: {
+          enabled: boolOrDefault(codeModRaw.enabled, false),
+          sourceDir: strOrDefault(codeModRaw.sourceDir, ""),
+          allowedPaths: Array.isArray(codeModRaw.allowedPaths)
+            ? (codeModRaw.allowedPaths as unknown[]).filter((v): v is string => typeof v === "string")
+            : ["extensions/", "skills/", "_AIDocs/"],
+          blockedPaths: Array.isArray(codeModRaw.blockedPaths)
+            ? (codeModRaw.blockedPaths as unknown[]).filter((v): v is string => typeof v === "string")
+            : ["src/gateway/", "src/config/", ".env", "System.Owner.json"],
+          maxFilesPerPass: numOrDefault(codeModRaw.maxFilesPerPass, 10, 1, 50),
+          maxLinesPerPass: numOrDefault(codeModRaw.maxLinesPerPass, 500, 10, 5000),
+          requireBuildPass: boolOrDefault(codeModRaw.requireBuildPass, true),
+          autoRevertOnFailure: boolOrDefault(codeModRaw.autoRevertOnFailure, true),
+        },
       },
       permission: {
         botName: strOrDefault(permissionRaw.botName, ""),

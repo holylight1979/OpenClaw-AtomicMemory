@@ -44,6 +44,7 @@ import {
   loadIterationState,
   saveIterationState,
 } from "./src/self-iteration.js";
+import { buildEvolveGuardContext } from "./src/evolve-guard.js";
 
 import {
   resolvePermissionLevel,
@@ -185,8 +186,13 @@ function registerHooks(state: PluginState): void {
         ctx.senderId, ctx.senderIsOwner, cfg,
         state.runtimeAdminIds, ctx.channelId, state.systemIdentity,
       );
+      // Evolve guard context: inject only for owner when codeModification is enabled
+      const codeModCfg = cfg.selfIteration.codeModification;
+      const evolveCtx = (codeModCfg.enabled && ctx.senderIsOwner === true)
+        ? "\n" + buildEvolveGuardContext(codeModCfg)
+        : "";
       return {
-        appendSystemContext: buildSelfAwarenessPrompt(cfg, state.systemIdentity, level),
+        appendSystemContext: buildSelfAwarenessPrompt(cfg, state.systemIdentity, level) + evolveCtx,
       };
     });
   }
