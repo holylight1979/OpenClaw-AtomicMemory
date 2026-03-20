@@ -1,6 +1,6 @@
 # OpenClaw _AIDocs Index
 
-> 專案知識庫。2026-03-12 建立，2026-03-21 更新（Phase 3 完成 — CLI/Commands/Config/Plugins/Hooks 函式級索引）。
+> 專案知識庫。2026-03-12 建立，2026-03-21 更新（Phase 4 完成 — 全 src/ 47 子目錄函式級索引，28 份文件）。
 
 | # | 文件 | 說明 |
 |---|------|------|
@@ -26,3 +26,9 @@
 | 20 | [Core-Plugins-Functions.md](Core-Plugins-Functions.md) | Plugins 函式級索引 — 55 檔 9,573 行、Loader/Discovery/Manifest/Registry/Hooks(24)/Runtime/Install/Update/Commands/Provider/Tools 全子系統、呼叫圖 |
 | 21 | [Core-Config-Functions.md](Core-Config-Functions.md) | Config 函式級索引 — 136 檔 27,851 行、I/O 核心/Zod Schema/驗證/預設值/路徑解析/環境變數/$include/merge-patch/Legacy Migration/Redaction/Session Store 全子系統、呼叫圖 |
 | 22 | [Core-Commands-Functions.md](Core-Commands-Functions.md) | Commands 函式級索引 — 235 檔 43,510 行、21 子系統、Agent/Auth/Channel/Doctor/Models/Onboard/Status/Sandbox CLI handlers 完整 export 簽名、呼叫圖 |
+| 23 | [Core-Media-Functions.md](Core-Media-Functions.md) | Browser+Media+Link+Markdown+Canvas 函式級索引 — 169 檔 26,631 行、6 子系統（Playwright/Chrome MCP/CDP/Provider/Markdown IR/Canvas）、跨模組呼叫圖 |
+| 24 | [Core-Channels-Functions.md](Core-Channels-Functions.md) | Channels/LINE/WhatsApp/Pairing/Sessions 函式級索引 — ~156 檔、9 channel adapter、Plugin 註冊/Outbound/Allowlist/Typing/Thread Binding/Draft Stream/Run State/Rich Menu/Flex/Pairing Store/Session Key、呼叫圖 |
+| 25 | [Core-SDK-Functions.md](Core-SDK-Functions.md) | Plugin SDK + Memory + Secrets + Security 函式級索引 — 198 檔 35,182 行、SDK public API 面（webhook/auth/lifecycle/group-access）、Memory hybrid search engine（6 embedding providers + batch + MMR + temporal-decay）、Secrets runtime snapshot + target registry、Security audit（25+ checks）+ sensitive-filter + external-content 防護、呼叫圖 |
+| 26 | [Core-Utilities-Functions.md](Core-Utilities-Functions.md) | Core Utilities 函式級索引 — 227 檔 27,323 行、13 目錄（shared/utils/logging/process/daemon/terminal/tui/wizard/node-host/providers/compat/test-helpers/test-utils）、IP 解析+SSRF 防護、Command Queue 多 lane 併發、Process Supervisor、三平台 Daemon、TUI 全功能、呼叫圖 |
+| 27 | [Core-AutoReply-Functions.md](Core-AutoReply-Functions.md) | AutoReply+Cron+TTS+Context Engine 函式級索引 — 226 檔 ~44,500 行、入站 dispatch/指令系統(40+ handlers)/LLM Agent 執行(fallback+memory flush)/Directive 解析/Block Streaming/Session 管理/Followup Queue/Model Selection/Cron Service(timer+jobs+delivery)/Isolated Agent/TTS 3-provider/Context Engine registry、呼叫圖+系統歸屬分類 |
+| 28 | [Core-Infra-Functions.md](Core-Infra-Functions.md) | Infra 函式級索引 — 227 檔 40,751 行、5 子目錄（format-time/net/outbound/tls/根）、Exec Approval 全鏈/Outbound 遞送(33 檔)/Heartbeat/Device+Node 配對/APNS 推播/檔案系統安全/網路安全(SSRF)/更新安裝系統/Provider 用量/狀態遷移、呼叫關聯圖+24 系統歸屬分類 |
