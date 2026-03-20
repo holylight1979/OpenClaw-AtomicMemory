@@ -786,6 +786,52 @@ function buildChatCommands(): ChatCommandDefinition[] {
         },
       ],
     }),
+    // ── Guest access management ────────────────────────────────────────────
+    defineChatCommand({
+      key: "request-access",
+      nativeName: "request_access",
+      description: "Request access permission from the bot owner.",
+      textAlias: "/request-access",
+      category: "status",
+      permissionLevel: "guest",
+    }),
+    defineChatCommand({
+      key: "approve-access",
+      description: "Approve a pending access request.",
+      textAlias: "/approve-access",
+      category: "management",
+      permissionLevel: "owner",
+      acceptsArgs: true,
+      args: [
+        {
+          name: "senderId",
+          description: "The sender ID to approve",
+          type: "string",
+        },
+      ],
+    }),
+    defineChatCommand({
+      key: "deny-access",
+      description: "Deny a pending access request.",
+      textAlias: "/deny-access",
+      category: "management",
+      permissionLevel: "owner",
+      acceptsArgs: true,
+      args: [
+        {
+          name: "senderId",
+          description: "The sender ID to deny",
+          type: "string",
+        },
+      ],
+    }),
+    defineChatCommand({
+      key: "pending-access",
+      description: "List pending access requests.",
+      textAlias: "/pending-access",
+      category: "management",
+      permissionLevel: "owner",
+    }),
     ...listChannelDocks()
       .filter((dock) => dock.capabilities.nativeCommands)
       .map((dock) => defineDockCommand(dock)),

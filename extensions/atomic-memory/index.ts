@@ -81,6 +81,12 @@ import {
 } from "./src/owner-challenge.js";
 import { updateMemoryIndex, type TouchedAtom } from "./src/memory-index.js";
 import { isTestFact, readFactsFromWorkspace } from "./src/workspace-reader.js";
+import {
+  submitAccessRequest,
+  approveAccessRequest,
+  denyAccessRequest,
+  listPendingRequests,
+} from "./src/access-request.js";
 import { atomicMemoryConfigSchema, type AtomicMemoryConfig } from "./config.js";
 
 // ============================================================================
@@ -334,6 +340,18 @@ function registerHooks(state: PluginState): void {
           }
         }
 
+        // ── Owner notification: pending access requests ──────────────────
+        let pendingAccessCtx = "";
+        if (senderLevel === "owner") {
+          try {
+            const pending = await listPendingRequests(api.resolvePath(cfg.atomStorePath));
+            if (pending.length > 0) {
+              const names = pending.map(r => `${r.senderId}(${r.platform})`).join(", ");
+              pendingAccessCtx = `\n[System] ${pending.length} 個待審核權限申請: ${names}。使用 /pending-access 查看詳情。`;
+            }
+          } catch { /* ignore */ }
+        }
+
         // ── Self-awareness: inject capability context when asked ─────────
         let capabilityCtx = "";
         if (/(?:你是誰|who\s*are\s*you|誰是你的?(?:主人|管理者)|who(?:'s| is) your (?:owner|manager)|我能做什麼|what can i do|我的權限)/i.test(queryForRecall)) {
@@ -480,7 +498,7 @@ function registerHooks(state: PluginState): void {
         if (atoms.length === 0) {
           log.info(`recall returned 0 atoms for channel ${channelId}`);
 
-        const noRecallContext = [wisdomInject, blindSpotSuffix, capabilityCtx, mergeSuffix, testCheckSuffix].filter(Boolean).join("");
+        const noRecallContext = [wisdomInject, blindSpotSuffix, capabilityCtx, pendingAccessCtx, mergeSuffix, testCheckSuffix].filter(Boolean).join("");
           if (noRecallContext) {
             return { prependContext: noRecallContext.trim() };
           }
@@ -495,7 +513,7 @@ function registerHooks(state: PluginState): void {
             normal: cfg.tokenBudget.mediumBudget,
             deep: cfg.tokenBudget.longBudget,
             charsPerToken: cfg.tokenBudget.charsPerToken,
-          }) + wisdomInject + blindSpotSuffix + capabilityCtx + mergeSuffix + testCheckSuffix,
+          }) + wisdomInject + blindSpotSuffix + capabilityCtx + pendingAccessCtx + mergeSuffix + testCheckSuffix,
         };
       } catch (err) {
         log.warn(`recall failed: ${String(err)}`);
@@ -2176,6 +2194,144 @@ function registerCommands(state: PluginState): void {
           "  apply [desc]      — Validate + build + commit current changes",
           "  journal <summary> — Record an iteration note to memory",
         ].join("\n"),
+      };
+    },
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Guest access management commands (Phase 4: Guest)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  api.registerCommand({
+    name: "request-access",
+    description: "提請使用權限 — Guest 可用",
+    requireAuth: false,
+    handler: async (ctx) => {
+      const senderId = ctx.senderId;
+      const channel = ctx.channel ?? "unknown";
+      if (!senderId) {
+        return { text: "⚠️ 無法取得您的身份資訊。" };
+      }
+
+      const result = await submitAccessRequest(
+        api.resolvePath(cfg.atomStorePath),
+        senderId,
+        channel,
+        undefined, // displayName not available in PluginCommandContext
+      );
+
+      if (result.alreadyPending) {
+        return { text: "⏳ 您已有待審核的權限申請，請等待 Owner 審核。" };
+      }
+
+      log.info(`ACCESS REQUEST: ${senderId} on ${channel}`);
+      return {
+        text: "✅ 權限申請已送出。Owner 會收到通知，請耐心等候審核。",
+      };
+    },
+  });
+
+  api.registerCommand({
+    name: "approve-access",
+    description: "核准權限申請 — Owner only",
+    acceptsArgs: true,
+    handler: async (ctx) => {
+      // Permission: owner-only
+      const senderLevel = resolvePermissionLevel(
+        ctx.senderId, undefined, cfg, state.runtimeAdminIds, ctx.channel, state.systemIdentity,
+      );
+      if (senderLevel !== "owner") {
+        return { text: "⛔ /approve-access requires owner permission." };
+      }
+
+      const targetId = ctx.args?.trim();
+      if (!targetId) {
+        return { text: "Usage: /approve-access <senderId>" };
+      }
+
+      const request = await approveAccessRequest(
+        api.resolvePath(cfg.atomStorePath),
+        targetId,
+        ctx.senderId,
+      );
+      if (!request) {
+        return { text: `⚠️ 找不到 ${targetId} 的待審核申請。` };
+      }
+
+      // Auto-add to pairing store allowlist
+      try {
+        const { addChannelAllowFromStoreEntry } = await import("openclaw/plugin-sdk");
+        const channelId = request.platform as any;
+        await addChannelAllowFromStoreEntry({
+          channel: channelId,
+          entry: targetId,
+        });
+        log.info(`ACCESS APPROVED: ${targetId} on ${request.platform} — added to allowlist`);
+      } catch (err) {
+        log.warn(`Failed to add ${targetId} to allowlist: ${err instanceof Error ? err.message : String(err)}`);
+        return {
+          text: `✅ 已核准 ${targetId} 的申請，但自動加入 allowlist 失敗。\n請手動執行: /allowlist add dm ${targetId} --channel ${request.platform}`,
+        };
+      }
+
+      return {
+        text: `✅ 已核准 ${targetId}（${request.platform}）的權限申請，已自動加入 allowlist。`,
+      };
+    },
+  });
+
+  api.registerCommand({
+    name: "deny-access",
+    description: "拒絕權限申請 — Owner only",
+    acceptsArgs: true,
+    handler: async (ctx) => {
+      const senderLevel = resolvePermissionLevel(
+        ctx.senderId, undefined, cfg, state.runtimeAdminIds, ctx.channel, state.systemIdentity,
+      );
+      if (senderLevel !== "owner") {
+        return { text: "⛔ /deny-access requires owner permission." };
+      }
+
+      const targetId = ctx.args?.trim();
+      if (!targetId) {
+        return { text: "Usage: /deny-access <senderId>" };
+      }
+
+      const request = await denyAccessRequest(
+        api.resolvePath(cfg.atomStorePath),
+        targetId,
+        ctx.senderId,
+      );
+      if (!request) {
+        return { text: `⚠️ 找不到 ${targetId} 的待審核申請。` };
+      }
+
+      log.info(`ACCESS DENIED: ${targetId} on ${request.platform}`);
+      return { text: `❌ 已拒絕 ${targetId}（${request.platform}）的權限申請。` };
+    },
+  });
+
+  api.registerCommand({
+    name: "pending-access",
+    description: "列出待審核的權限申請 — Owner only",
+    handler: async (ctx) => {
+      const senderLevel = resolvePermissionLevel(
+        ctx.senderId, undefined, cfg, state.runtimeAdminIds, ctx.channel, state.systemIdentity,
+      );
+      if (senderLevel !== "owner") {
+        return { text: "⛔ /pending-access requires owner permission." };
+      }
+
+      const pending = await listPendingRequests(api.resolvePath(cfg.atomStorePath));
+      if (pending.length === 0) {
+        return { text: "📋 目前沒有待審核的權限申請。" };
+      }
+
+      const lines = pending.map((r, i) =>
+        `${i + 1}. ${r.senderId} (${r.platform}${r.displayName ? ` — ${r.displayName}` : ""}) — ${r.requestedAt}`,
+      );
+      return {
+        text: `📋 待審核權限申請 (${pending.length}):\n${lines.join("\n")}\n\n使用 /approve-access <senderId> 或 /deny-access <senderId>`,
       };
     },
   });

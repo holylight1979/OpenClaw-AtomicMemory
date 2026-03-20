@@ -350,6 +350,13 @@ export async function getReplyFromConfig(
   directives = inlineActionResult.directives;
   abortedLastRun = inlineActionResult.abortedLastRun ?? abortedLastRun;
 
+  // Guest chat interception: non-command messages from guests → fixed reply, no LLM
+  if (command.senderPermissionLevel === "guest") {
+    return {
+      text: "你尚未取得使用權限。請使用 /request-access 提請認證。",
+    };
+  }
+
   await stageSandboxMedia({
     ctx,
     sessionCtx,

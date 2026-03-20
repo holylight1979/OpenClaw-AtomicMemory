@@ -117,6 +117,8 @@ export type AtomicMemoryConfig = {
     toolWriteRequiresOwner: boolean;
     /** Inject self-awareness prompt (who owns me, permission boundaries). Default true. */
     botSelfAwareness: boolean;
+    /** Commands accessible to guest users (not in any allowlist). */
+    guestCommands: string[];
   };
   crossPlatform: {
     /** Enable cross-platform recall (query across all channels for person/info-request). Default true. */
@@ -224,7 +226,7 @@ export const atomicMemoryConfigSchema = {
 
     // permission sub-config
     const permissionRaw = (cfg.permission ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(permissionRaw, ["botName", "ownerName", "adminIds", "toolWriteRequiresOwner", "botSelfAwareness"], "permission config");
+    assertAllowedKeys(permissionRaw, ["botName", "ownerName", "adminIds", "toolWriteRequiresOwner", "botSelfAwareness", "guestCommands"], "permission config");
 
     // crossPlatform sub-config
     const crossPlatformRaw = (cfg.crossPlatform ?? {}) as Record<string, unknown>;
@@ -309,6 +311,9 @@ export const atomicMemoryConfigSchema = {
           : [],
         toolWriteRequiresOwner: boolOrDefault(permissionRaw.toolWriteRequiresOwner, true),
         botSelfAwareness: boolOrDefault(permissionRaw.botSelfAwareness, true),
+        guestCommands: Array.isArray(permissionRaw.guestCommands)
+          ? (permissionRaw.guestCommands as unknown[]).filter((v): v is string => typeof v === "string")
+          : ["help", "commands", "whoami", "status", "request-access"],
       },
       crossPlatform: {
         enabled: boolOrDefault(crossPlatformRaw.enabled, true),

@@ -108,7 +108,7 @@ export function resolvePermissionLevel(
 ): PermissionLevel {
   if (senderIsOwner === true) return "owner";
   if (identity && isOwnerByIdentity(senderId, channel, identity)) return "owner";
-  if (!senderId) return "user";
+  if (!senderId) return "guest";
   const allAdminIds = [...cfg.permission.adminIds, ...(runtimeAdminIds ?? [])];
   if (allAdminIds.includes(senderId)) return "admin";
   if (isAdminByIdentity(senderId, channel, identity ?? null)) return "admin";

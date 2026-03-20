@@ -326,6 +326,7 @@ export {
   resolveAccountWithDefaultFallback,
 } from "./account-resolution.js";
 export { issuePairingChallenge } from "../pairing/pairing-challenge.js";
+export { addChannelAllowFromStoreEntry } from "../pairing/pairing-store.js";
 export { handleSlackMessageAction } from "./slack-message-actions.js";
 export { extractToolSend } from "./tool-send.js";
 export {

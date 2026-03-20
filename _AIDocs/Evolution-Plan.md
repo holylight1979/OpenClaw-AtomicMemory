@@ -551,3 +551,64 @@ Agent commit → GitHub Actions trigger
 - Phase 2B Discord visibility ✅
 - Phase 2C LINE Rich Menu ✅
 - Phase 3 Self-evolution guard ✅
+
+---
+
+## 十一、Phase 4 Guest 等級實作 — 2026-03-21
+
+> **狀態：✅ 已完成**（guest 權限完整實作 — 攔截 + 申請 + 審核 + 配置）
+
+### 實作內容
+
+#### 1. Guest Level Resolution 修正 ✅
+
+- `permission-guard.ts` `resolvePermissionLevel()` 修正：無 senderId 時返回 `"guest"`（原返回 `"user"`，與 core `resolveEffectivePermissionLevel()` 不一致）
+- `buildCapabilityContext()` 已有 guest case，無需修改
+
+#### 2. `/request-access` 指令 ✅
+
+- `commands-registry.data.ts` 新增指令定義（`permissionLevel: "guest"`，category: "status"）
+- 新建 `access-request.ts` — 完整 CRUD 儲存模組（submitAccessRequest / approveAccessRequest / denyAccessRequest / listPendingRequests）
+- 儲存位置：`{atomStorePath}/_permission/access-requests.json`
+- Owner 通知：`before_agent_start` hook 偵測 pending requests → 注入 system context 提醒
+
+#### 3. Owner 審核指令 ✅
+
+| 指令 | 權限 | 功能 |
+|------|------|------|
+| `/approve-access <senderId>` | owner | 核准 → 自動 `addChannelAllowFromStoreEntry()` 加入 allowlist |
+| `/deny-access <senderId>` | owner | 拒絕請求 |
+| `/pending-access` | owner | 列出所有 pending 請求 |
+
+`/approve-access` 設計：核准後嘗試自動加入 pairing store allowlist，失敗時 fallback 提示手動 `/allowlist add`。
+
+#### 4. Guest Chat 攔截（Core 層）✅
+
+- `get-reply.ts` 在 `handleInlineActions()` 之後、`runPreparedReply()` 之前插入 guest 檢查
+- Guest 非指令訊息 → 直接 return 固定回覆，**不進 LLM pipeline**
+- 指令仍由 `handleInlineActions` 正常處理（guest 可執行白名單內指令）
+
+#### 5. Config 支援 ✅
+
+- `config.ts` permission 區段新增 `guestCommands: string[]`
+- 預設值：`["help", "commands", "whoami", "status", "request-access"]`
+- `plugin-sdk/index.ts` 新增 `addChannelAllowFromStoreEntry` re-export
+
+### 影響檔案（8 個）
+
+| 檔案 | 變更 |
+|------|------|
+| `extensions/atomic-memory/src/permission-guard.ts` | guest resolution fix |
+| `extensions/atomic-memory/src/access-request.ts` | 新建 |
+| `extensions/atomic-memory/config.ts` | guestCommands config |
+| `extensions/atomic-memory/index.ts` | 4 command handlers + owner notification |
+| `extensions/atomic-memory/g-int.test.ts` | mock config 補齊 guestCommands |
+| `src/auto-reply/commands-registry.data.ts` | 4 個新指令定義 |
+| `src/auto-reply/reply/get-reply.ts` | guest chat 攔截 |
+| `src/plugin-sdk/index.ts` | pairing store re-export |
+
+### 前置
+- Phase 1 統一權限 ✅
+- Phase 2A 指令閘門 ✅
+- Phase 3 Self-evolution guard ✅
+- Phase 4 /iterate 指令 ✅

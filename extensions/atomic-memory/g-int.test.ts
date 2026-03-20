@@ -91,6 +91,7 @@ function makeConfig(overrides?: Partial<AtomicMemoryConfig>): AtomicMemoryConfig
       adminIds: ["admin-001"],
       toolWriteRequiresOwner: true,
       botSelfAwareness: true,
+      guestCommands: ["help", "commands", "whoami", "status", "request-access"],
     },
     crossPlatform: { enabled: true, autoMerge: true },
     systemIdentityPath: "/tmp/test-identity.json",
@@ -390,6 +391,7 @@ describe("Scene 5: Bot self-awareness", () => {
         adminIds: [],
         toolWriteRequiresOwner: true,
         botSelfAwareness: true,
+        guestCommands: ["help", "commands", "whoami", "status", "request-access"],
       },
     });
     const prompt = buildSelfAwarenessPrompt(emptyCfg);
