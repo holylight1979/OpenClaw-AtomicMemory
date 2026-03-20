@@ -15,6 +15,7 @@ export {
   loadSystemIdentity,
   saveSystemIdentity,
   invalidateSystemIdentityCache,
+  getCachedSystemIdentity,
   isOwnerByIdentity,
   isAdminByIdentity,
   resolveEffectivePermissionLevel,

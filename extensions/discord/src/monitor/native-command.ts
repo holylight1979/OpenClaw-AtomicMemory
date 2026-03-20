@@ -43,6 +43,7 @@ import type { ReplyPayload } from "../../../../src/auto-reply/types.js";
 import { resolveCommandAuthorizedFromAuthorizers } from "../../../../src/channels/command-gating.js";
 import {
   hasMinLevel,
+  loadSystemIdentity,
   resolveEffectivePermissionLevel,
 } from "../../../../src/channels/permission-level.js";
 import { resolveNativeCommandSessionTargets } from "../../../../src/channels/native-command-session-targets.js";
@@ -1511,10 +1512,12 @@ async function dispatchDiscordCommandInteraction(params: {
   // Permission level gate: check sender's level against command's required level
   const requiredLevel = command.permissionLevel ?? "user";
   if (requiredLevel !== "user") {
+    const identity = await loadSystemIdentity();
     const senderPermissionLevel = resolveEffectivePermissionLevel({
       senderIsOwner: ownerOk,
       senderId: sender.id,
       channel: "discord",
+      identity,
       isInAllowlist: commandAuthorized,
     });
     if (!hasMinLevel(senderPermissionLevel, requiredLevel)) {

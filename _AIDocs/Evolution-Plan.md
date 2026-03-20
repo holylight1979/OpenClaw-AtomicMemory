@@ -103,32 +103,20 @@ Phase 2B: Discord Command Visibility（1 session）
 Phase 2C: LINE Rich Menu 分層（1 session）
 ```
 
-### Phase 2A — Core 層 permissionLevel Enforcement
+### Phase 2A — Core 層 permissionLevel Enforcement ✅ (2026-03-20)
 
 **目標**：讓 `permissionLevel` 定義生效，非 owner 無法執行 owner 指令。
 
-**改動範圍**：
+**已完成**（commit b0b3604 + identity 補完）：
 
-1. **`commands-context.ts`**：`buildCommandContext()` 加入 `senderPermissionLevel`
-   ```typescript
-   // 現在只有 isAuthorizedSender, senderIsOwner, ownerList, senderId
-   // 加入：
-   senderPermissionLevel: auth.senderPermissionLevel
-   ```
-
-2. **`commands-types.ts`**：`HandleCommandsParams` / `CommandContext` type 加 `senderPermissionLevel: PermissionLevel`
-
-3. **command dispatch 入口**（`commands-core.ts` 或 dispatch 點）：在找到匹配指令後、執行 handler 前：
-   ```typescript
-   const required = command.permissionLevel ?? "user";
-   if (!hasMinLevel(ctx.senderPermissionLevel, required)) {
-     return replyNoPermission(command.key, required, ctx.senderPermissionLevel);
-   }
-   ```
-
-4. **`command-auth.ts`**：整合 `resolveEffectivePermissionLevel`（取代現在的自製邏輯），加載 System.Owner.json identity
-
-**風險**：低。現有 permissionLevel 定義已合理，只需接線。需確認 gateway operator (`operator.admin` scope) 是否應該 = owner。
+1. ✅ `permission-level.ts`：新建 unified PermissionLevel 型別 + `hasMinLevel()` + `resolveEffectivePermissionLevel()` + `getCachedSystemIdentity()` sync getter
+2. ✅ `commands-registry.data.ts`：全部 60+ 指令標註 `permissionLevel`（owner/admin/user/guest）
+3. ✅ `command-auth.ts`：`resolveCommandAuthorization()` 整合 `resolveEffectivePermissionLevel()` + `getCachedSystemIdentity()` 傳入 identity（admin 可被正確識別）
+4. ✅ `commands-types.ts`：`CommandContext` 加 `senderPermissionLevel: PermissionLevel`
+5. ✅ `commands-context.ts`：`buildCommandContext()` 從 auth 傳入 `senderPermissionLevel`
+6. ✅ `commands-core.ts`：`handleCommands()` 統一閘門 — `findCommandByTextAlias` + `hasMinLevel` check
+7. ✅ `native-command.ts`：Discord dispatch ephemeral 拒絕 + `loadSystemIdentity()` 傳入 identity
+8. ✅ gateway operator (`operator.admin` scope) → `senderIsOwner = true` → owner level
 
 ### Phase 2B — Discord Command Visibility
 

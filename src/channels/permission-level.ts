@@ -97,6 +97,11 @@ export function invalidateSystemIdentityCache(): void {
   identityLoadedPath = null;
 }
 
+/** Synchronous access to the cached identity (null if not yet loaded). */
+export function getCachedSystemIdentity(): SystemIdentity | null {
+  return cachedIdentity;
+}
+
 export function isOwnerByIdentity(
   senderId: string | undefined,
   channel: string | undefined,
