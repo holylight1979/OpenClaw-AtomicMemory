@@ -151,27 +151,34 @@ Phase 2C: LINE Rich Menu 分層（1 session）
 - 可以 per-command per-role/per-user 設定
 - 但較複雜，建議先用 `defaultMemberPermissions` 方案
 
-### Phase 2C — LINE Rich Menu 分層
+### Phase 2C — LINE Rich Menu 分層 ✅ (2026-03-21)
 
 **目標**：不同權限等級用戶看到不同選單。
 
-**實作方式**：
+**已完成**：
 
-1. **建立 3 個 Rich Menu**：
-   - `owner-menu`：全功能（含 /config、/restart、/approve、管理工具）
-   - `admin-menu`：管理功能（/session、/model、/subagents、agent 管理）
-   - `user-menu`：基本功能（/help、/status、對話、TTS）
+1. ✅ `config-schema.ts`：`LineCommonConfigSchema` 加 `richMenus: { owner?, admin?, user? }` 欄位
+2. ✅ `rich-menu-binding.ts`：新建綁定服務 — `ensureRichMenuBinding()` fire-and-forget 呼叫
+   - 讀取 `resolveEffectivePermissionLevel()` 解析 sender 權限等級
+   - 映射 owner/admin/user/guest → 對應 richMenuId（含 fallback: owner→admin→user）
+   - `Map<accountId:userId, { menuId, boundAt }>` 快取，TTL 1hr
+   - 錯誤 swallow + logVerbose，不阻塞 messaging
+3. ✅ `bot-handlers.ts`：3 個 webhook handler 整合
+   - `handleMessageEvent` — DM/群組訊息後 fire-and-forget bind
+   - `handleFollowEvent` — 用戶追蹤 bot 時立即 bind
+   - `handlePostbackEvent` — Rich Menu 按鈕點擊時 re-validate bind
+4. ✅ `scripts/setup-line-rich-menus.ts`：一鍵建立 3 層 Rich Menu
+   - owner: /config、/restart、/approve、/debug、/status、/help
+   - admin: /session、/model、/subagents、/status、/new、/help
+   - user: /help、/status、/new、/tts、/compact、/stop
+   - 支援 `--set-default`（設 user menu 為預設）+ `--account <id>`
+   - 輸出 richMenuId JSON，直接貼入 openclaw.json
 
-2. **LINE plugin hook**（`before_agent_start` 或自訂 channel event）：
-   - 首次互動時 resolve sender permission level
-   - 呼叫 LINE Messaging API `POST /v2/bot/user/{userId}/richmenu/{richMenuId}` 綁定對應 menu
-   - Cache binding 避免重複 API call
-
-3. **Rich Menu 建立**：LINE Official Account Manager 或 API 上傳圖片 + 設定 action 區域
-
-4. **Postback 路由**：Rich Menu 按鈕 data 帶 command key → OpenClaw 當 text command 處理
-
-**依賴**：需要 LINE Bot Channel Access Token（long-lived），已在 `.env` 中。
+**使用方式**：
+```bash
+npx tsx scripts/setup-line-rich-menus.ts --set-default
+# 將輸出的 richMenuIds 貼入 openclaw.json channels.line.richMenus
+```
 
 ---
 
@@ -302,7 +309,7 @@ Agent commit → GitHub Actions trigger
 | **2A** | Core permissionLevel enforcement | 1 | — | ✅ 完成 |
 | **2.5** | 敏感資訊過濾（安全核心） | 1 | 2A | ✅ 完成 |
 | **2B** | Discord command visibility（defaultMemberPermissions） | 1 | 2A | |
-| **2C** | LINE Rich Menu 分層 | 1 | 2A | |
+| **2C** | LINE Rich Menu 分層 | 1 | 2A | ✅ 完成 |
 | **3** | Self-evolution 基礎（workspace scope + safeBins + 流程驗證） | 2 | 2A+2.5 | |
 | **4** | `/evolve` Skill 封裝 | 1-2 | 3 | |
 | **5** | External CI/CD pipeline | 2-3 | 4（可選） | |

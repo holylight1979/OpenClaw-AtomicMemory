@@ -3,6 +3,14 @@ import { z } from "zod";
 const DmPolicySchema = z.enum(["open", "allowlist", "pairing", "disabled"]);
 const GroupPolicySchema = z.enum(["open", "allowlist", "disabled"]);
 
+const RichMenusSchema = z
+  .object({
+    owner: z.string().optional(),
+    admin: z.string().optional(),
+    user: z.string().optional(),
+  })
+  .strict();
+
 const LineCommonConfigSchema = z.object({
   enabled: z.boolean().optional(),
   channelAccessToken: z.string().optional(),
@@ -17,6 +25,7 @@ const LineCommonConfigSchema = z.object({
   responsePrefix: z.string().optional(),
   mediaMaxMb: z.number().optional(),
   webhookPath: z.string().optional(),
+  richMenus: RichMenusSchema.optional(),
 });
 
 const LineGroupConfigSchema = z

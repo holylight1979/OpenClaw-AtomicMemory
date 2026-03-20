@@ -2,6 +2,7 @@
 
 | 日期 | 變更 | 影響文件 |
 |------|------|---------|
+| 2026-03-21 | **Phase 2C — LINE Rich Menu 權限分層**: 不同權限等級用戶在 LINE 看到不同 Rich Menu — (1) config-schema.ts 加 richMenus schema (2) 新建 rich-menu-binding.ts 綁定服務（resolveEffectivePermissionLevel → per-user bind + 1hr cache）(3) bot-handlers.ts 3 個 webhook handler 整合 fire-and-forget binding (4) 新建 scripts/setup-line-rich-menus.ts 一鍵建立 owner/admin/user 三層 menu | config-schema.ts, rich-menu-binding.ts, bot-handlers.ts, setup-line-rich-menus.ts, Evolution-Plan.md |
 | 2026-03-21 | **Core-Commands-Functions Phase 3 deep read**: src/commands/ 235 檔 ~43,510 行函式級索引 — 21 子系統（Agent Execution/Auth Choice 15+ providers/Channels/Configure/Doctor 20+ 子模組/Gateway Status/Health/Models/Onboarding/Provider Setup/Sessions/Status/Backup/Sandbox/Reset/Setup/Dashboard）、~40 slash command handlers 完整對照、呼叫圖 | Core-Commands-Functions.md, _INDEX.md |
 | 2026-03-21 | **Core-CLI-Functions Phase 3 deep read**: src/cli/ 182 檔 ~27,600 行函式級索引 — 18 子目錄、Bootstrap/Commander/Route/Gateway/Daemon/Browser/Nodes/Cron/Update 20+ 分類、啟動鏈+Command 執行鏈+Gateway RPC 鏈+Secret Resolution 鏈呼叫圖 | Core-CLI-Functions.md, _INDEX.md |
 | 2026-03-21 | **Core-Hooks-Functions Phase 3 deep read**: src/hooks/ 25 檔 4,333 行函式級索引 — 核心事件引擎/Hook 探索與設定/4 bundled handlers/Gmail 子系統/訊息 Hook 橋接/安裝子系統、呼叫圖 | Core-Hooks-Functions.md, _INDEX.md |

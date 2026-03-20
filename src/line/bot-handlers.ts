@@ -48,6 +48,7 @@ import {
 } from "./bot-message-context.js";
 import { downloadLineMedia } from "./download.js";
 import { resolveLineGroupConfigEntry } from "./group-keys.js";
+import { ensureRichMenuBinding } from "./rich-menu-binding.js";
 import { pushMessageLine, replyMessageLine } from "./send.js";
 import type { LineGroupConfig, ResolvedLineAccount } from "./types.js";
 
@@ -490,6 +491,17 @@ async function handleMessageEvent(event: MessageEvent, context: LineHandlerConte
     return;
   }
 
+  // Fire-and-forget: bind the correct rich menu for this user's permission level.
+  const sourceUserId = event.source.type === "user" ? event.source.userId : (event.source as Record<string, unknown>).userId as string | undefined;
+  if (sourceUserId) {
+    void ensureRichMenuBinding({
+      userId: sourceUserId,
+      accountId: account.accountId,
+      account,
+      cfg,
+    });
+  }
+
   // Mention gating: skip group messages that don't @mention the bot when required.
   // Default requireMention to true (consistent with all other channels) unless
   // the group config explicitly sets it to false.
@@ -598,10 +610,19 @@ async function handleMessageEvent(event: MessageEvent, context: LineHandlerConte
   }
 }
 
-async function handleFollowEvent(event: FollowEvent, _context: LineHandlerContext): Promise<void> {
+async function handleFollowEvent(event: FollowEvent, context: LineHandlerContext): Promise<void> {
   const userId = event.source.type === "user" ? event.source.userId : undefined;
   logVerbose(`line: user ${userId ?? "unknown"} followed`);
-  // Could implement welcome message here
+
+  // Bind rich menu on follow so the user sees the correct menu immediately.
+  if (userId) {
+    void ensureRichMenuBinding({
+      userId,
+      accountId: context.account.accountId,
+      account: context.account,
+      cfg: context.cfg,
+    });
+  }
 }
 
 async function handleUnfollowEvent(
@@ -634,6 +655,17 @@ async function handlePostbackEvent(
   const decision = await shouldProcessLineEvent(event, context);
   if (!decision.allowed) {
     return;
+  }
+
+  // Fire-and-forget: ensure rich menu binding is up-to-date.
+  const postbackUserId = event.source.type === "user" ? event.source.userId : (event.source as Record<string, unknown>).userId as string | undefined;
+  if (postbackUserId) {
+    void ensureRichMenuBinding({
+      userId: postbackUserId,
+      accountId: context.account.accountId,
+      account: context.account,
+      cfg: context.cfg,
+    });
   }
 
   const postbackContext = await buildLinePostbackContext({
