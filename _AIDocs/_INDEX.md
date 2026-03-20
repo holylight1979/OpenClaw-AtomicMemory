@@ -1,6 +1,6 @@
 # OpenClaw _AIDocs Index
 
-> 專案知識庫。2026-03-12 建立，2026-03-20 更新（6,350+ 檔案掃描、Agents 函式級索引）。
+> 專案知識庫。2026-03-12 建立，2026-03-21 更新（Phase 3 完成 — CLI/Commands/Config/Plugins/Hooks 函式級索引）。
 
 | # | 文件 | 說明 |
 |---|------|------|
@@ -21,3 +21,8 @@
 | 15 | [Core-ACP-Functions.md](Core-ACP-Functions.md) | ACP 函式級索引 — 36 檔 6,500+ 行、全 export 簽名、server/client/translator/control-plane/runtime/persistent-bindings、呼叫圖 |
 | 16 | [Core-Gateway-Functions.md](Core-Gateway-Functions.md) | Gateway 函式級索引 — ~180 檔、106 RPC methods、14 HTTP routes、18 WS events、16 子系統、跨模組依賴 |
 | 17 | [Core-Agents-Functions.md](Core-Agents-Functions.md) | Agents 函式級索引 — ~408 檔、13 子系統、模型認證/Runner/Tool/Sandbox/Subagent/Skills 完整 export 簽名 |
+| 18 | [Core-Hooks-Functions.md](Core-Hooks-Functions.md) | Hooks 函式級索引 — 25 檔 4,333 行、事件引擎/4 bundled handlers/Gmail 子系統/安裝/訊息橋接、呼叫圖 |
+| 19 | [Core-CLI-Functions.md](Core-CLI-Functions.md) | CLI 函式級索引 — 182 檔 27,600 行、Bootstrap/Commander/Route/Gateway/Daemon/Browser/Nodes/Cron/Update 全子系統、呼叫圖 |
+| 20 | [Core-Plugins-Functions.md](Core-Plugins-Functions.md) | Plugins 函式級索引 — 55 檔 9,573 行、Loader/Discovery/Manifest/Registry/Hooks(24)/Runtime/Install/Update/Commands/Provider/Tools 全子系統、呼叫圖 |
+| 21 | [Core-Config-Functions.md](Core-Config-Functions.md) | Config 函式級索引 — 136 檔 27,851 行、I/O 核心/Zod Schema/驗證/預設值/路徑解析/環境變數/$include/merge-patch/Legacy Migration/Redaction/Session Store 全子系統、呼叫圖 |
+| 22 | [Core-Commands-Functions.md](Core-Commands-Functions.md) | Commands 函式級索引 — 235 檔 43,510 行、21 子系統、Agent/Auth/Channel/Doctor/Models/Onboard/Status/Sandbox CLI handlers 完整 export 簽名、呼叫圖 |
