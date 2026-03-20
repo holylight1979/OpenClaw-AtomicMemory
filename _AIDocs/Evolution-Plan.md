@@ -479,9 +479,75 @@ Agent commit → GitHub Actions trigger
 - `enabled: false` 預設 — 必須 owner 明確啟用
 
 ### 尚未實作（留給 Phase 5）
-- `self_analyze` / `self_propose` / `self_apply` / `self_journal` 四個工具
-- 實際的 build→test→commit→revert pipeline
+- ~~`self_analyze` / `self_propose` / `self_apply` / `self_journal` 四個工具~~ → Phase 4 已實作
+- ~~實際的 build→test→commit→revert pipeline~~ → Phase 4 已實作
 - 流程驗證端到端測試
+- 分支隔離（git checkout -b self-iterate/xxx）
 
 ### 前置
 - Phase 2A 已完成（permissionLevel enforcement） ✅
+
+---
+
+## 十、Phase 4 實作完成（/iterate 指令 + 整合收尾）— 2026-03-21
+
+> **狀態：✅ 已完成**（自我迭代工具套件 + 指令封裝 + 回饋循環 + 權限審計）
+
+### 實作內容
+
+#### 1. 自我迭代工具套件 ✅
+
+新檔：`extensions/atomic-memory/src/self-iterate-tools.ts`
+
+| 工具 | 權限 | 功能 | 副作用 |
+|------|------|------|--------|
+| `self_analyze` | owner | 讀取原始碼 + git log + atom_recall 架構知識 | 無（唯讀） |
+| `self_propose` | owner | 驗證目標路徑 vs evolve guard + 讀取檔案內容 | 無（唯讀） |
+| `self_apply` | owner | 驗證變更 → build → commit（失敗可 auto-revert） | 寫入（git commit） |
+| `self_journal` | owner | 記錄迭代結果到 atomic memory（[臨] atom） | 寫入（atom store） |
+
+所有工具 `canTriggerEvolution()` 權限檢查：owner-only + codeModification.enabled。
+
+#### 2. `/iterate` 指令 ✅
+
+- `api.registerCommand("iterate")` — owner-only chat command
+- 子指令：
+  - `/iterate analyze <path>` — 分析指定路徑的原始碼
+  - `/iterate propose <desc>` — 準備修改提案（引導使用 self_propose tool）
+  - `/iterate apply [desc]` — 驗證 + build + commit 當前修改
+  - `/iterate journal <summary>` — 手動記錄迭代筆記
+- 權限驗證透過 `resolvePermissionLevel()` + System.Owner.json identity
+
+#### 3. 原子記憶回饋循環 ✅
+
+- **self_analyze → auto atom_recall**：分析前自動查詢相關架構知識，注入上下文
+- **self_apply 成功 → auto self_journal**：自動記錄 commit hash + diff stats + 描述
+- **self_apply 失敗 → pitfall atom**：自動記錄失敗原因為 `[pitfall]` atom（[臨]）
+- **pitfall atoms 可被 atom_recall 查詢**：未來迭代可自動查到歷史失敗，避免重蹈覆轍
+
+#### 4. 權限事件審計 ✅
+
+- `atom_permission` 工具的 add/remove 動作自動建立 `[permission-audit]` event atom
+- 記錄：操作類型、目標 userId、日期
+- Atoms 為 [臨] 級，可被 recall 查詢用於審計追蹤
+
+#### 5. 測試修復 ✅
+
+- `g-int.test.ts` mock config 補齊 `codeModification` + `systemIdentityPath` 欄位
+- TypeScript 零錯誤（atomic-memory 範圍內）
+
+### 安全設計
+
+1. 所有工具 `canTriggerEvolution()` gate（owner + enabled check）
+2. `self_apply` 路徑驗證透過 `validateEvolveBatch()`（evolve guard）
+3. Build 失敗時 `autoRevertOnFailure` 自動 `git checkout -- .`
+4. 單次改動上限（maxFilesPerPass + maxLinesPerPass）
+5. Pitfall 自動記錄，防止重複失敗
+
+### 前置
+- Phase 1 統一權限 ✅
+- Phase 2A 指令閘門 ✅
+- Phase 2.5 敏感資訊過濾 ✅
+- Phase 2B Discord visibility ✅
+- Phase 2C LINE Rich Menu ✅
+- Phase 3 Self-evolution guard ✅

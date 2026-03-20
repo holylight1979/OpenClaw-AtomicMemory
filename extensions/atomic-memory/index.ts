@@ -44,7 +44,14 @@ import {
   loadIterationState,
   saveIterationState,
 } from "./src/self-iteration.js";
-import { buildEvolveGuardContext } from "./src/evolve-guard.js";
+import { buildEvolveGuardContext, canTriggerEvolution } from "./src/evolve-guard.js";
+import {
+  selfAnalyze,
+  selfPropose,
+  selfApply,
+  selfJournal,
+  recordPitfall,
+} from "./src/self-iterate-tools.js";
 
 import {
   resolvePermissionLevel,
@@ -1630,6 +1637,14 @@ function registerTools(state: PluginState): void {
           const added = await addRuntimeAdmin(storePath, userId);
           if (added) {
             state.runtimeAdminIds.push(userId);
+            // Permission audit: record admin addition to atomic memory
+            try {
+              const auditText = `[permission-audit] Admin added: ${userId} by owner on ${new Date().toISOString().slice(0, 10)}`;
+              await store.findOrCreate("event" as any, {
+                text: auditText, category: "event" as any, confidence: "[臨]",
+              }, { scope: "global" });
+              log.info(`permission audit: admin added ${userId}`);
+            } catch { /* audit is best-effort */ }
           }
           return {
             content: [{ type: "text", text: added ? `Added admin: ${userId}` : `${userId} is already an admin.` }],
@@ -1642,6 +1657,14 @@ function registerTools(state: PluginState): void {
           if (removed) {
             const idx = state.runtimeAdminIds.indexOf(userId);
             if (idx >= 0) state.runtimeAdminIds.splice(idx, 1);
+            // Permission audit: record admin removal to atomic memory
+            try {
+              const auditText = `[permission-audit] Admin removed: ${userId} by owner on ${new Date().toISOString().slice(0, 10)}`;
+              await store.findOrCreate("event" as any, {
+                text: auditText, category: "event" as any, confidence: "[臨]",
+              }, { scope: "global" });
+              log.info(`permission audit: admin removed ${userId}`);
+            } catch { /* audit is best-effort */ }
           }
           return {
             content: [{ type: "text", text: removed ? `Removed admin: ${userId}` : `${userId} is not a runtime admin.` }],
@@ -1657,6 +1680,279 @@ function registerTools(state: PluginState): void {
     })) as OpenClawPluginToolFactory,
     { name: "atom_permission" },
   );
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Self-Iterate Tools (Phase 4) — owner-only, requires codeModification.enabled
+  // ──────────────────────────────────────────────────────────────────────────
+
+  const codeModCfg = cfg.selfIteration.codeModification;
+
+  // self_analyze — read-only code analysis
+  api.registerTool(
+    ((toolCtx: OpenClawPluginToolContext) => ({
+      name: "self_analyze",
+      label: "Self-Analyze",
+      description:
+        "Analyze source code for improvement opportunities. Owner-only. " +
+        "Reads files at the given path, checks git history, and recalls related architecture knowledge from atomic memory. " +
+        "Use before self_propose to understand the codebase.",
+      parameters: Type.Object({
+        path: Type.String({ description: "Relative path to analyze (file or directory, e.g. 'extensions/atomic-memory/src/recall-engine.ts')" }),
+      }),
+      async execute(_toolCallId: string, params: unknown) {
+        const { path: targetPath } = params as { path: string };
+
+        // Permission: owner-only + codeModification enabled
+        const check = canTriggerEvolution(toolCtx.senderIsOwner, codeModCfg);
+        if (!check.allowed) {
+          return {
+            content: [{ type: "text", text: `Permission denied: ${check.reason}` }],
+            details: { error: "permission_denied" },
+          };
+        }
+
+        // Feedback loop: auto atom_recall for related knowledge
+        const recallFn = async (query: string): Promise<string> => {
+          try {
+            const results = await recall.search(query, { topK: 3, minScore: 0.3 });
+            if (results.length === 0) return "";
+            return results.map(r =>
+              `[${r.atom.category}/${r.atom.id}] ${r.atom.confidence} ${r.atom.knowledge.slice(0, 200)}`
+            ).join("\n");
+          } catch { return ""; }
+        };
+
+        const result = await selfAnalyze(targetPath, codeModCfg, recallFn);
+
+        const fileList = result.files.map(f =>
+          `  ${f.path} (${f.lines} lines)`
+        ).join("\n");
+
+        const output = [
+          `## Analysis: ${result.path}`,
+          `**Files:** ${result.files.length} (${result.totalLines} total lines)`,
+          fileList,
+          `\n**Git History:**\n${result.gitHistory}`,
+          result.relatedKnowledge
+            ? `\n**Related Knowledge:**\n${result.relatedKnowledge}`
+            : "",
+          result.files.length > 0
+            ? `\n**File Contents:**\n${result.files.map(f => `### ${f.path}\n\`\`\`\n${f.preview}\n\`\`\``).join("\n\n")}`
+            : "",
+        ].filter(Boolean).join("\n");
+
+        return {
+          content: [{ type: "text", text: output }],
+          details: {
+            path: result.path,
+            fileCount: result.files.length,
+            totalLines: result.totalLines,
+          },
+        };
+      },
+    })) as OpenClawPluginToolFactory,
+    { name: "self_analyze" },
+  );
+
+  // self_propose — read-only proposal validation
+  api.registerTool(
+    ((toolCtx: OpenClawPluginToolContext) => ({
+      name: "self_propose",
+      label: "Self-Propose",
+      description:
+        "Validate target files and prepare a modification proposal. Owner-only. " +
+        "Checks paths against evolve guard rules. Returns file contents for the agent to generate diff proposals. " +
+        "Use after self_analyze, before making actual edits.",
+      parameters: Type.Object({
+        description: Type.String({ description: "What you want to change and why" }),
+        targetPaths: Type.Array(Type.String(), { description: "Relative paths of files to modify" }),
+      }),
+      async execute(_toolCallId: string, params: unknown) {
+        const { description, targetPaths } = params as { description: string; targetPaths: string[] };
+
+        const check = canTriggerEvolution(toolCtx.senderIsOwner, codeModCfg);
+        if (!check.allowed) {
+          return {
+            content: [{ type: "text", text: `Permission denied: ${check.reason}` }],
+            details: { error: "permission_denied" },
+          };
+        }
+
+        const result = selfPropose(description, targetPaths, codeModCfg);
+
+        const fileLines = result.targetFiles.map(f => {
+          const status = f.guardOk ? "✓" : `✗ ${f.guardReason}`;
+          return `  ${status} ${f.path} (${f.lines} lines)`;
+        }).join("\n");
+
+        const output = [
+          `## Proposal: ${result.description}`,
+          `**Guard check:** ${result.allGuardsPassed ? "All paths OK ✓" : "BLOCKED — see below"}`,
+          `**Limits:** max ${result.limits.maxFiles} files, max ${result.limits.maxLines} lines`,
+          `**Target files:**\n${fileLines}`,
+          result.allGuardsPassed
+            ? `\n**File Contents for Review:**\n${result.targetFiles.map(f => `### ${f.path}\n\`\`\`\n${f.content.slice(0, 3000)}\n\`\`\``).join("\n\n")}`
+            : "\nFix blocked paths before proceeding.",
+        ].join("\n");
+
+        return {
+          content: [{ type: "text", text: output }],
+          details: {
+            description: result.description,
+            allGuardsPassed: result.allGuardsPassed,
+            fileCount: result.targetFiles.length,
+          },
+        };
+      },
+    })) as OpenClawPluginToolFactory,
+    { name: "self_propose" },
+  );
+
+  // self_apply — validate + build + commit pipeline
+  api.registerTool(
+    ((toolCtx: OpenClawPluginToolContext) => ({
+      name: "self_apply",
+      label: "Self-Apply",
+      description:
+        "Validate uncommitted changes, run build, and commit. Owner-only. " +
+        "Call AFTER you have already edited files. The tool validates paths against evolve guard, " +
+        "runs `pnpm build`, and commits on success. Auto-reverts on build failure if configured. " +
+        "Automatically records a journal entry on success.",
+      parameters: Type.Object({
+        description: Type.String({ description: "Short description of what was changed and why" }),
+      }),
+      async execute(_toolCallId: string, params: unknown) {
+        const { description } = params as { description: string };
+
+        const check = canTriggerEvolution(toolCtx.senderIsOwner, codeModCfg);
+        if (!check.allowed) {
+          return {
+            content: [{ type: "text", text: `Permission denied: ${check.reason}` }],
+            details: { error: "permission_denied" },
+          };
+        }
+
+        const result = selfApply(description, codeModCfg);
+
+        // Feedback loop: auto-journal on success
+        if (result.success && result.journalMarkdown) {
+          const journalStoreFn = async (text: string, category: string): Promise<string | null> => {
+            try {
+              const atom = await store.findOrCreate(category as any, {
+                text, category: category as any, confidence: "[臨]",
+              }, { scope: "global" });
+              const chunks = chunkAtom(atom);
+              if (chunks.length > 0) await vectors.index(chunks);
+              return `${atom.category}/${atom.id}`;
+            } catch { return null; }
+          };
+
+          const journalResult = await selfJournal(
+            description,
+            `${result.stats.linesAdded}+ ${result.stats.linesRemoved}- in ${result.filesChanged.length} files`,
+            true,
+            journalStoreFn,
+          );
+          if (journalResult.stored) {
+            log.info(`self_apply auto-journal: ${journalResult.atomRef}`);
+          }
+        }
+
+        // Feedback loop: record pitfall on failure
+        if (!result.success && result.error) {
+          const pitfallStoreFn = async (text: string, category: string): Promise<string | null> => {
+            try {
+              const atom = await store.findOrCreate(category as any, {
+                text, category: category as any, confidence: "[臨]",
+              }, { scope: "global" });
+              return `${atom.category}/${atom.id}`;
+            } catch { return null; }
+          };
+          await recordPitfall(description, result.error, pitfallStoreFn);
+        }
+
+        const statusEmoji = result.success ? "✓" : result.reverted ? "↩" : "✗";
+        const output = [
+          `## Self-Apply: ${statusEmoji} ${result.success ? "Success" : "Failed"}`,
+          `**Build:** ${result.buildResult}`,
+          result.commitHash ? `**Commit:** ${result.commitHash.slice(0, 9)}` : "",
+          result.reverted ? "**Auto-reverted:** yes" : "",
+          `**Changed files (${result.filesChanged.length}):** ${result.filesChanged.join(", ")}`,
+          `**Stats:** +${result.stats.linesAdded} -${result.stats.linesRemoved}`,
+          result.error ? `\n**Error:**\n${result.error}` : "",
+        ].filter(Boolean).join("\n");
+
+        return {
+          content: [{ type: "text", text: output }],
+          details: {
+            success: result.success,
+            buildResult: result.buildResult,
+            commitHash: result.commitHash,
+            reverted: result.reverted,
+            filesChanged: result.filesChanged,
+          },
+        };
+      },
+    })) as OpenClawPluginToolFactory,
+    { name: "self_apply" },
+  );
+
+  // self_journal — record iteration knowledge
+  api.registerTool(
+    ((toolCtx: OpenClawPluginToolContext) => ({
+      name: "self_journal",
+      label: "Self-Journal",
+      description:
+        "Record an iteration result or discovery to atomic memory. Owner-only. " +
+        "Use to log what was changed, why, and whether it succeeded. " +
+        "Entries are stored as [臨] atoms and can be queried via atom_recall.",
+      parameters: Type.Object({
+        summary: Type.String({ description: "What was done (short, ≤100 chars)" }),
+        details: Type.Optional(Type.String({ description: "Additional context: reasoning, diff stats, test results" })),
+        success: Type.Boolean({ description: "Whether the iteration succeeded" }),
+      }),
+      async execute(_toolCallId: string, params: unknown) {
+        const { summary, details = "", success } = params as {
+          summary: string; details?: string; success: boolean;
+        };
+
+        const check = canTriggerEvolution(toolCtx.senderIsOwner, codeModCfg);
+        if (!check.allowed) {
+          return {
+            content: [{ type: "text", text: `Permission denied: ${check.reason}` }],
+            details: { error: "permission_denied" },
+          };
+        }
+
+        const storeFn = async (text: string, category: string): Promise<string | null> => {
+          try {
+            const atom = await store.findOrCreate(category as any, {
+              text, category: category as any, confidence: "[臨]",
+            }, { scope: "global" });
+            const chunks = chunkAtom(atom);
+            if (chunks.length > 0) await vectors.index(chunks);
+            await store.updateMemoryIndex();
+            return `${atom.category}/${atom.id}`;
+          } catch { return null; }
+        };
+
+        const result = await selfJournal(summary, details, success, storeFn);
+
+        if (result.stored) {
+          return {
+            content: [{ type: "text", text: `Journal entry stored: ${result.atomRef}` }],
+            details: { action: "stored", atomRef: result.atomRef },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: `Journal entry failed: ${result.error ?? "unknown"}` }],
+          details: { error: result.error },
+        };
+      },
+    })) as OpenClawPluginToolFactory,
+    { name: "self_journal" },
+  );
 }
 
 // ============================================================================
@@ -1664,7 +1960,7 @@ function registerTools(state: PluginState): void {
 // ============================================================================
 
 function registerCommands(state: PluginState): void {
-  const { store, api } = state;
+  const { cfg, store, vectors, recall, log, api } = state;
 
   api.registerCommand({
     name: "atoms",
@@ -1715,6 +2011,172 @@ function registerCommands(state: PluginState): void {
       }
 
       return { text: "Usage: /atoms [list [category]|stats]" };
+    },
+  });
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // /iterate — self-evolution convenience command (Phase 4)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  api.registerCommand({
+    name: "iterate",
+    description: "自我迭代 — /iterate [analyze <path>|propose <desc>|apply|journal]",
+    acceptsArgs: true,
+    handler: async (ctx) => {
+      const codeModCfg = cfg.selfIteration.codeModification;
+
+      // Permission: owner-only (resolve from senderId + identity)
+      const senderLevel = resolvePermissionLevel(
+        ctx.senderId, undefined, cfg, state.runtimeAdminIds, ctx.channel, state.systemIdentity,
+      );
+      if (senderLevel !== "owner") {
+        return { text: "⛔ /iterate requires owner permission." };
+      }
+
+      if (!codeModCfg.enabled) {
+        return { text: "⛔ Self-evolution is disabled. Set selfIteration.codeModification.enabled = true in config." };
+      }
+
+      const args = ctx.args?.trim() ?? "";
+      const spaceIdx = args.indexOf(" ");
+      const subCmd = spaceIdx > 0 ? args.slice(0, spaceIdx) : args;
+      const subArgs = spaceIdx > 0 ? args.slice(spaceIdx + 1).trim() : "";
+
+      // ── /iterate analyze <path> ──
+      if (subCmd === "analyze") {
+        if (!subArgs) return { text: "Usage: /iterate analyze <path>" };
+
+        const recallFn = async (query: string): Promise<string> => {
+          try {
+            const results = await recall.search(query, { topK: 3, minScore: 0.3 });
+            if (results.length === 0) return "";
+            return results.map(r =>
+              `[${r.atom.category}/${r.atom.id}] ${r.atom.confidence} ${r.atom.knowledge.slice(0, 200)}`
+            ).join("\n");
+          } catch { return ""; }
+        };
+
+        const result = await selfAnalyze(subArgs, codeModCfg, recallFn);
+
+        const fileList = result.files.map(f =>
+          `  ${f.path} (${f.lines} lines)`
+        ).join("\n");
+
+        return {
+          text: [
+            `## Analysis: ${result.path}`,
+            `Files: ${result.files.length} (${result.totalLines} total lines)`,
+            fileList,
+            `\nGit History:\n${result.gitHistory}`,
+            result.relatedKnowledge ? `\nRelated Knowledge:\n${result.relatedKnowledge}` : "",
+            result.files.length > 0
+              ? `\nFile Contents:\n${result.files.map(f => `### ${f.path}\n\`\`\`\n${f.preview}\n\`\`\``).join("\n\n")}`
+              : "",
+          ].filter(Boolean).join("\n"),
+        };
+      }
+
+      // ── /iterate propose <description> ──
+      if (subCmd === "propose") {
+        if (!subArgs) return { text: "Usage: /iterate propose <description>" };
+        return {
+          text: [
+            `## Proposal Mode`,
+            `Description: ${subArgs}`,
+            ``,
+            `To proceed, use the self_propose tool with specific target file paths:`,
+            `\`self_propose({ description: "${subArgs}", targetPaths: ["path/to/file.ts"] })\``,
+            ``,
+            `Or tell me which files you'd like to modify and I'll validate them against the evolve guard.`,
+          ].join("\n"),
+        };
+      }
+
+      // ── /iterate apply ──
+      if (subCmd === "apply") {
+        const description = subArgs || "manual iteration";
+        const result = selfApply(description, codeModCfg);
+
+        // Feedback loop: auto-journal on success
+        if (result.success && result.journalMarkdown) {
+          const storeFn = async (text: string, category: string): Promise<string | null> => {
+            try {
+              const atom = await store.findOrCreate(category as any, {
+                text, category: category as any, confidence: "[臨]",
+              }, { scope: "global" });
+              const chunks = chunkAtom(atom);
+              if (chunks.length > 0) await vectors.index(chunks);
+              return `${atom.category}/${atom.id}`;
+            } catch { return null; }
+          };
+          await selfJournal(
+            description,
+            `${result.stats.linesAdded}+ ${result.stats.linesRemoved}- in ${result.filesChanged.length} files`,
+            true,
+            storeFn,
+          );
+        }
+
+        // Feedback loop: pitfall on failure
+        if (!result.success && result.error) {
+          const storeFn = async (text: string, category: string): Promise<string | null> => {
+            try {
+              const atom = await store.findOrCreate(category as any, {
+                text, category: category as any, confidence: "[臨]",
+              }, { scope: "global" });
+              return `${atom.category}/${atom.id}`;
+            } catch { return null; }
+          };
+          await recordPitfall(description, result.error, storeFn);
+        }
+
+        const statusEmoji = result.success ? "✓" : result.reverted ? "↩" : "✗";
+        return {
+          text: [
+            `## Self-Apply: ${statusEmoji} ${result.success ? "Success" : "Failed"}`,
+            `Build: ${result.buildResult}`,
+            result.commitHash ? `Commit: ${result.commitHash.slice(0, 9)}` : "",
+            result.reverted ? "Auto-reverted: yes" : "",
+            `Changed: ${result.filesChanged.join(", ") || "(none)"}`,
+            `Stats: +${result.stats.linesAdded} -${result.stats.linesRemoved}`,
+            result.error ? `\nError:\n${result.error}` : "",
+          ].filter(Boolean).join("\n"),
+        };
+      }
+
+      // ── /iterate journal ──
+      if (subCmd === "journal") {
+        if (!subArgs) return { text: "Usage: /iterate journal <summary>" };
+        const storeFn = async (text: string, category: string): Promise<string | null> => {
+          try {
+            const atom = await store.findOrCreate(category as any, {
+              text, category: category as any, confidence: "[臨]",
+            }, { scope: "global" });
+            const chunks = chunkAtom(atom);
+            if (chunks.length > 0) await vectors.index(chunks);
+            await store.updateMemoryIndex();
+            return `${atom.category}/${atom.id}`;
+          } catch { return null; }
+        };
+
+        const result = await selfJournal(subArgs, "", true, storeFn);
+        return {
+          text: result.stored
+            ? `Journal entry stored: ${result.atomRef}`
+            : `Journal failed: ${result.error ?? "unknown"}`,
+        };
+      }
+
+      return {
+        text: [
+          "Usage: /iterate <subcommand>",
+          "",
+          "  analyze <path>    — Analyze source code at path",
+          "  propose <desc>    — Prepare a modification proposal",
+          "  apply [desc]      — Validate + build + commit current changes",
+          "  journal <summary> — Record an iteration note to memory",
+        ].join("\n"),
+      };
     },
   });
 }

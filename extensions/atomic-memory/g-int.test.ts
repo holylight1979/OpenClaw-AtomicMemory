@@ -78,7 +78,13 @@ function makeConfig(overrides?: Partial<AtomicMemoryConfig>): AtomicMemoryConfig
     actr: { weight: 0.15 },
     episodic: { enabled: false, minDurationMs: 120000, minTurns: 3, ttlDays: 24 },
     wisdom: { enabled: false, situationClassifier: false, reflectionTracking: false },
-    selfIteration: { enabled: false, oscillationWindow: 3, oscillationThreshold: 2, reviewInterval: 25 },
+    selfIteration: {
+      enabled: false, oscillationWindow: 3, oscillationThreshold: 2, reviewInterval: 25,
+      codeModification: {
+        enabled: false, sourceDir: "", allowedPaths: [], blockedPaths: [],
+        maxFilesPerPass: 10, maxLinesPerPass: 500, requireBuildPass: true, autoRevertOnFailure: true,
+      },
+    },
     permission: {
       botName: "小助手",
       ownerName: "Holy",
@@ -87,6 +93,7 @@ function makeConfig(overrides?: Partial<AtomicMemoryConfig>): AtomicMemoryConfig
       botSelfAwareness: true,
     },
     crossPlatform: { enabled: true, autoMerge: true },
+    systemIdentityPath: "/tmp/test-identity.json",
     ...overrides,
   };
 }
