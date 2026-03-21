@@ -355,3 +355,181 @@ export type EvolveJournalEntry = {
   /** Files touched (relative paths). */
   filesTouched: string[];
 };
+
+// ============================================================================
+// OETAV Phase A — Signal & Evidence Types
+// ============================================================================
+
+/** 9 signal types observed by the Signal Collector. */
+export type SignalType = "S1" | "S2" | "S3" | "S4" | "S5" | "S6" | "S7" | "S8" | "S9";
+
+export const SIGNAL_LABELS: Record<SignalType, string> = {
+  S1: "Pitfall Accumulation",
+  S2: "Wisdom Blind Spot",
+  S3: "Recall Degradation",
+  S4: "Oscillation",
+  S5: "Recall Quality Drop",
+  S6: "Decision Flip",
+  S7: "AIDocs Drift",
+  S8: "Permission Boundary",
+  S9: "Knowledge Entropy",
+};
+
+/** A single observed signal from one session. */
+export type ObservedSignal = {
+  type: SignalType;
+  /** ISO-8601 timestamp of observation. */
+  timestamp: string;
+  /** Severity 0-1. */
+  severity: number;
+  /** Human-readable description. */
+  details: string;
+  /** Raw source data for audit. */
+  source?: unknown;
+};
+
+/** Evidence bucket for one signal type — accumulated across sessions. */
+export type EvidenceBucket = {
+  signalType: SignalType;
+  /** Accumulated score (decayed each session). */
+  score: number;
+  /** ISO-8601 of last signal observation. */
+  lastUpdated: string;
+  /** Number of sessions that contributed evidence. */
+  sessionCount: number;
+  /** Recent signal history (capped). */
+  history: Array<{ timestamp: string; severity: number; details: string }>;
+  /** Sessions since last evidence was added (for 知行合一). */
+  staleCycles: number;
+};
+
+/** Persisted evidence store shape. */
+export type EvidenceStore = {
+  buckets: EvidenceBucket[];
+  lastDecaySession: string;
+};
+
+// ============================================================================
+// M2: Entropy Signal Types
+// ============================================================================
+
+export type TierDistribution = {
+  tier: "臨" | "觀" | "固";
+  count: number;
+};
+
+export type CategoryDistribution = {
+  category: AtomCategory;
+  count: number;
+};
+
+export type EntropyResult = {
+  tierEntropy: number;
+  tierNormalized: number;
+  categoryEntropy: number;
+  categoryNormalized: number;
+  /** 0.6×tierNorm + 0.4×catNorm */
+  combinedScore: number;
+  interpretation: "rigid" | "healthy" | "chaotic";
+  details: string;
+};
+
+export type OrderResult = {
+  /** 0 = all [固] (rigid), 1 = all [臨] (chaotic) */
+  orderParameter: number;
+  entropy: number;
+  zone: "rigid" | "edge-of-chaos" | "chaotic";
+  signal: {
+    action: "none" | "increase-decay" | "increase-promotion";
+    reason: string;
+    urgency: "low" | "medium" | "high";
+  };
+  proportions: { fixed: number; observed: number; temporary: number };
+};
+
+// ============================================================================
+// M4: Stale Evidence Policy (used by Evidence Accumulator)
+// ============================================================================
+
+export type StaleEvidencePolicy = {
+  gracePeriodCycles: number;
+  decayRate: number;
+  archiveThreshold: number;
+};
+
+export type ActionUrgencyResult = {
+  urgency: number;
+  decayedScore: number;
+  shouldForceDecision: boolean;
+};
+
+// ============================================================================
+// M7: TTL Balance Types
+// ============================================================================
+
+export type FlowMetrics = {
+  recentCaptures: number[];
+  recentDecays: number[];
+  currentStore: { fixed: number; observed: number; temporary: number };
+  sessionsPerDay: number;
+};
+
+export type BalanceResult = {
+  injectionRate: number;
+  decayRate: number;
+  netFlow: number;
+  imbalanceRatio: number;
+  state: "steady" | "growing" | "atrophying" | "heat-death-risk" | "explosion-risk";
+  predictedSteadySize: number;
+  currentSize: number;
+  sessionsToCritical: number | null;
+  signal: {
+    action: "none" | "reduce-capture" | "reduce-decay" | "boost-capture" | "boost-decay";
+    reason: string;
+    urgency: "low" | "medium" | "high";
+  };
+};
+
+export type SignalTiming = {
+  signalName: string;
+  durationMs: number;
+  touchedAtomStore: boolean;
+  priority: number;
+};
+
+export type CollectionTiming = {
+  sessionDurationMs: number;
+  signals: SignalTiming[];
+};
+
+export type OverheadReport = {
+  perSignal: Array<{ name: string; durationMs: number; percentOfSession: number }>;
+  totalCollectionMs: number;
+  overheadPercent: number;
+  budgetCapMs: number;
+  withinBudget: boolean;
+  perturbationScore: number;
+  skipRecommendation: string[];
+  signal: {
+    action: "none" | "skip-low-priority" | "increase-budget" | "redesign-signals";
+    reason: string;
+  };
+};
+
+// ============================================================================
+// MetricsSnapshot extension
+// ============================================================================
+
+export type MetricsSnapshot = {
+  sessionKey: string;
+  timestamp: string;
+  totalAtoms: number;
+  tierCounts: { fixed: number; observed: number; temporary: number };
+  categoryCounts: Partial<Record<AtomCategory, number>>;
+  recallAvgScore?: number;
+  recallEmptyRate?: number;
+  healthScore?: number;
+  tierEntropy?: number;
+  orderParameter?: number;
+  metacognitionScore?: number;
+};

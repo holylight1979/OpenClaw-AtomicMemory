@@ -105,6 +105,41 @@ export type AtomicMemoryConfig = {
       /** Auto-revert on build failure. Default true. */
       autoRevertOnFailure: boolean;
     };
+    /** OETAV autonomous iteration settings (Phase A+). */
+    autonomousIteration: {
+      /** Enable OETAV signal collection + evidence accumulation. Default true. */
+      enabled: boolean;
+      /** Evidence score decay rate per session (0-1). Default 0.95. */
+      evidenceDecayRate: number;
+      /** M2: Entropy signal config. */
+      entropy: {
+        enabled: boolean;
+        rigidThreshold: number;
+        chaoticThreshold: number;
+        tierWeight: number;
+      };
+      /** M2: Order parameter config. */
+      orderParameter: {
+        rigidBound: number;
+        chaoticBound: number;
+      };
+      /** M7: Flow balance config. */
+      flowBalance: {
+        enabled: boolean;
+        steadyBand: number;
+      };
+      /** M7: Observer overhead budget. */
+      observerOverhead: {
+        enabled: boolean;
+        budgetMs: number;
+      };
+      /** M4: Stale evidence policy. */
+      staleEvidence: {
+        gracePeriodCycles: number;
+        decayRate: number;
+        archiveThreshold: number;
+      };
+    };
   };
   permission: {
     /** Bot's display name for self-awareness (e.g. "小助手"). */
@@ -218,11 +253,30 @@ export const atomicMemoryConfigSchema = {
 
     // selfIteration sub-config
     const selfIterationRaw = (cfg.selfIteration ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(selfIterationRaw, ["enabled", "oscillationWindow", "oscillationThreshold", "reviewInterval", "codeModification"], "selfIteration config");
+    assertAllowedKeys(selfIterationRaw, ["enabled", "oscillationWindow", "oscillationThreshold", "reviewInterval", "codeModification", "autonomousIteration"], "selfIteration config");
 
     // selfIteration.codeModification sub-config
     const codeModRaw = (selfIterationRaw.codeModification ?? {}) as Record<string, unknown>;
     assertAllowedKeys(codeModRaw, ["enabled", "sourceDir", "allowedPaths", "blockedPaths", "maxFilesPerPass", "maxLinesPerPass", "requireBuildPass", "autoRevertOnFailure"], "selfIteration.codeModification config");
+
+    // selfIteration.autonomousIteration sub-config
+    const autoIterRaw = (selfIterationRaw.autonomousIteration ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(autoIterRaw, ["enabled", "evidenceDecayRate", "entropy", "orderParameter", "flowBalance", "observerOverhead", "staleEvidence"], "selfIteration.autonomousIteration config");
+
+    const entropyRaw = (autoIterRaw.entropy ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(entropyRaw, ["enabled", "rigidThreshold", "chaoticThreshold", "tierWeight"], "autonomousIteration.entropy config");
+
+    const orderParamRaw = (autoIterRaw.orderParameter ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(orderParamRaw, ["rigidBound", "chaoticBound"], "autonomousIteration.orderParameter config");
+
+    const flowBalanceRaw = (autoIterRaw.flowBalance ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(flowBalanceRaw, ["enabled", "steadyBand"], "autonomousIteration.flowBalance config");
+
+    const overheadRaw = (autoIterRaw.observerOverhead ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(overheadRaw, ["enabled", "budgetMs"], "autonomousIteration.observerOverhead config");
+
+    const staleEvidenceRaw = (autoIterRaw.staleEvidence ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(staleEvidenceRaw, ["gracePeriodCycles", "decayRate", "archiveThreshold"], "autonomousIteration.staleEvidence config");
 
     // permission sub-config
     const permissionRaw = (cfg.permission ?? {}) as Record<string, unknown>;
@@ -301,6 +355,33 @@ export const atomicMemoryConfigSchema = {
           maxLinesPerPass: numOrDefault(codeModRaw.maxLinesPerPass, 500, 10, 5000),
           requireBuildPass: boolOrDefault(codeModRaw.requireBuildPass, true),
           autoRevertOnFailure: boolOrDefault(codeModRaw.autoRevertOnFailure, true),
+        },
+        autonomousIteration: {
+          enabled: boolOrDefault(autoIterRaw.enabled, true),
+          evidenceDecayRate: numOrDefault(autoIterRaw.evidenceDecayRate, 0.95, 0.5, 1),
+          entropy: {
+            enabled: boolOrDefault(entropyRaw.enabled, true),
+            rigidThreshold: numOrDefault(entropyRaw.rigidThreshold, 0.3, 0, 1),
+            chaoticThreshold: numOrDefault(entropyRaw.chaoticThreshold, 0.85, 0, 1),
+            tierWeight: numOrDefault(entropyRaw.tierWeight, 0.6, 0, 1),
+          },
+          orderParameter: {
+            rigidBound: numOrDefault(orderParamRaw.rigidBound, 0.3, 0, 1),
+            chaoticBound: numOrDefault(orderParamRaw.chaoticBound, 0.6, 0, 1),
+          },
+          flowBalance: {
+            enabled: boolOrDefault(flowBalanceRaw.enabled, true),
+            steadyBand: numOrDefault(flowBalanceRaw.steadyBand, 0.15, 0, 1),
+          },
+          observerOverhead: {
+            enabled: boolOrDefault(overheadRaw.enabled, true),
+            budgetMs: numOrDefault(overheadRaw.budgetMs, 5000, 1000, 30000),
+          },
+          staleEvidence: {
+            gracePeriodCycles: numOrDefault(staleEvidenceRaw.gracePeriodCycles, 3, 1, 20),
+            decayRate: numOrDefault(staleEvidenceRaw.decayRate, 0.2, 0, 1),
+            archiveThreshold: numOrDefault(staleEvidenceRaw.archiveThreshold, 0.3, 0, 1),
+          },
         },
       },
       permission: {

@@ -44,6 +44,9 @@ import {
   loadIterationState,
   saveIterationState,
 } from "./src/self-iteration.js";
+import { collectAll as collectSignals } from "./src/signal-collector.js";
+import { updateEvidence, decayEvidence } from "./src/evidence-accumulator.js";
+import type { TierDistribution, CategoryDistribution } from "./src/types.js";
 import { buildEvolveGuardContext, canTriggerEvolution } from "./src/evolve-guard.js";
 import {
   selfAnalyze,
@@ -721,6 +724,7 @@ function registerHooks(state: PluginState): void {
 
   api.on("session_end", async (_event, ctx) => {
     log.info("session_end fired");
+    let decayResults: import("./src/types.js").DecayResult[] = [];
     try {
       const results = await promotion.checkPromotions();
       const promoted = results.filter((r) => r.action === "promoted");
@@ -734,7 +738,7 @@ function registerHooks(state: PluginState): void {
       }
 
       // Decay check
-      const decayResults = await promotion.checkDecay();
+      decayResults = await promotion.checkDecay();
       const archived = decayResults.filter((r) => r.action === "archived");
       if (archived.length > 0) {
         log.info(`archived ${archived.length} stale atoms`);
@@ -809,6 +813,85 @@ function registerHooks(state: PluginState): void {
         iterState.maturityPhase = phase;
         await saveIterationState(atomStorePath, iterState);
         iterationLog.info(`state updated: phase=${phase}, episodics=${totalEpisodics}`);
+
+        // Phase A: Signal Collection + Evidence Accumulation
+        if (cfg.selfIteration.autonomousIteration.enabled) {
+          try {
+            const sessionKey = ctx.sessionKey ?? ctx.sessionId;
+            const sessState = sessionState.getState(sessionKey);
+
+            // Build tier/category distributions from atom store
+            let tierDist: TierDistribution[] | undefined;
+            let catDist: CategoryDistribution[] | undefined;
+            try {
+              const allAtoms = await store.list();
+              const tierMap: Record<string, number> = { "固": 0, "觀": 0, "臨": 0 };
+              const catMap: Record<string, number> = {};
+              for (const atom of allAtoms) {
+                const tierKey = atom.confidence.replace("[", "").replace("]", "");
+                tierMap[tierKey] = (tierMap[tierKey] ?? 0) + 1;
+                catMap[atom.category] = (catMap[atom.category] ?? 0) + 1;
+              }
+              tierDist = Object.entries(tierMap).map(([tier, count]) => ({
+                tier: tier as TierDistribution["tier"],
+                count,
+              }));
+              catDist = Object.entries(catMap).map(([category, count]) => ({
+                category: category as CategoryDistribution["category"],
+                count,
+              }));
+            } catch (e) {
+              iterationLog.warn(`tier/cat dist failed: ${e instanceof Error ? e.message : String(e)}`);
+            }
+
+            // Load wisdom metrics if available
+            let wisdomMetrics = null;
+            if (cfg.wisdom.enabled) {
+              try {
+                wisdomMetrics = await loadReflectionMetrics(cfg.atomStorePath);
+              } catch { /* ok — wisdom may not be enabled */ }
+            }
+
+            const autoCfg = cfg.selfIteration.autonomousIteration;
+            const { signals, overhead } = collectSignals(
+              {
+                sessionState: sessState!,
+                decayResults,
+                oscillationReport: report,
+                wisdomMetrics,
+                atomStorePath,
+                tierDist,
+                catDist,
+                entropyConfig: {
+                  rigidThreshold: autoCfg.entropy.rigidThreshold,
+                  chaoticThreshold: autoCfg.entropy.chaoticThreshold,
+                  tierWeight: autoCfg.entropy.tierWeight,
+                },
+                orderConfig: {
+                  rigidBound: autoCfg.orderParameter.rigidBound,
+                  chaoticBound: autoCfg.orderParameter.chaoticBound,
+                },
+              },
+              iterationLog,
+            );
+
+            iterationLog.info(
+              `signals collected: ${signals.length} (${signals.map((s) => s.type).join(", ")}) ` +
+              `in ${overhead.totalCollectionMs}ms (${overhead.withinBudget ? "within" : "OVER"} budget)`,
+            );
+
+            // Evidence accumulation + decay
+            await updateEvidence(atomStorePath, signals, iterationLog);
+            await decayEvidence(
+              atomStorePath,
+              sessionKey,
+              autoCfg.evidenceDecayRate,
+              iterationLog,
+            );
+          } catch (err) {
+            iterationLog.warn(`Phase A signal collection failed: ${err instanceof Error ? err.message : String(err)}`);
+          }
+        }
       } catch (err) {
         iterationLog.warn(`iteration update failed: ${err instanceof Error ? err.message : String(err)}`);
       }
