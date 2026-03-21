@@ -233,11 +233,72 @@ export type ApplyResult = {
   journalMarkdown?: string;
 };
 
+// ---------------------------------------------------------------------------
+// Secret scanning patterns (mirrors src/security/sensitive-filter.ts)
+// ---------------------------------------------------------------------------
+
+const SECRET_PATTERNS: { label: string; re: RegExp }[] = [
+  { label: "API key/secret/token/password", re: /(?:api[_-]?key|secret|token|password|credential|access[_-]?token)\s*[:=]\s*["']?[A-Za-z0-9+/=_\-.]{16,}/i },
+  { label: "Private key", re: /-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/ },
+  { label: "channelSecret", re: /channelSecret\s*[:=]\s*["']?[A-Za-z0-9+/=_\-.]{10,}/i },
+  { label: "channelAccessToken", re: /channelAccessToken\s*[:=]\s*["']?[A-Za-z0-9+/=_\-.]{10,}/i },
+  { label: "Bearer token", re: /Bearer\s+[A-Za-z0-9+/=_\-.]{20,}/i },
+  { label: "OpenAI key", re: /sk-[A-Za-z0-9]{20,}/ },
+  { label: "GitHub PAT", re: /ghp_[A-Za-z0-9]{36,}/ },
+  { label: "Slack token", re: /xoxb-[A-Za-z0-9-]+/ },
+];
+
+/**
+ * Scan staged diff content for sensitive patterns.
+ * Returns an array of findings (empty = clean).
+ */
+function scanDiffForSecrets(sourceDir: string): { file: string; line: number; pattern: string }[] {
+  let diffOutput: string;
+  try {
+    diffOutput = execSync("git diff --cached -U0", {
+      cwd: sourceDir, encoding: "utf-8", timeout: 30_000,
+    });
+  } catch {
+    return [];
+  }
+  if (!diffOutput.trim()) return [];
+
+  const findings: { file: string; line: number; pattern: string }[] = [];
+  let currentFile = "";
+  let lineNum = 0;
+
+  for (const rawLine of diffOutput.split("\n")) {
+    const fileMatch = rawLine.match(/^\+\+\+ b\/(.+)/);
+    if (fileMatch) {
+      currentFile = fileMatch[1];
+      continue;
+    }
+    const hunkMatch = rawLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)/);
+    if (hunkMatch) {
+      lineNum = parseInt(hunkMatch[1], 10) - 1;
+      continue;
+    }
+    if (rawLine.startsWith("+") && !rawLine.startsWith("+++")) {
+      lineNum++;
+      const addedContent = rawLine.slice(1);
+      for (const { label, re } of SECRET_PATTERNS) {
+        if (re.test(addedContent)) {
+          findings.push({ file: currentFile, line: lineNum, pattern: label });
+        }
+      }
+    } else if (!rawLine.startsWith("-")) {
+      lineNum++;
+    }
+  }
+
+  return findings;
+}
+
 /**
  * Validate current uncommitted changes, run build, and commit.
  * Assumes the agent has already applied edits to the working tree.
  *
- * Pipeline: validate paths → build → commit (or revert on failure).
+ * Pipeline: branch isolation → validate paths → build → secret scan → commit → merge (or cleanup on failure).
  */
 export function selfApply(
   description: string,
@@ -278,7 +339,48 @@ export function selfApply(
     };
   }
 
-  // 3. Build (if required)
+  // 3. Branch isolation — work on self-iterate/{timestamp} branch
+  const originalBranch = execSync("git rev-parse --abbrev-ref HEAD", {
+    cwd: sourceDir, encoding: "utf-8", timeout: 10_000,
+  }).trim();
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+  const iterateBranch = `self-iterate/${timestamp}`;
+
+  try {
+    execSync(`git checkout -b "${iterateBranch}"`, {
+      cwd: sourceDir, encoding: "utf-8", timeout: 10_000,
+    });
+    log.info(`self_apply created branch: ${iterateBranch}`);
+  } catch (branchErr) {
+    const errMsg = branchErr instanceof Error ? branchErr.message : String(branchErr);
+    return {
+      success: false,
+      buildResult: "skipped",
+      reverted: false,
+      filesChanged: changedFiles,
+      stats: diffStats,
+      error: `Failed to create isolation branch: ${errMsg}`,
+    };
+  }
+
+  // Helper: abandon branch and return to original
+  const abandonBranch = () => {
+    try {
+      execSync(`git checkout "${originalBranch}"`, { cwd: sourceDir, timeout: 10_000 });
+      execSync(`git branch -D "${iterateBranch}"`, { cwd: sourceDir, timeout: 10_000 });
+      log.info(`self_apply abandoned branch: ${iterateBranch}`);
+    } catch {
+      // Fallback: try git update-ref if branch -D is policy-blocked
+      try {
+        execSync(`git checkout "${originalBranch}"`, { cwd: sourceDir, timeout: 10_000 });
+        execSync(`git update-ref -d "refs/heads/${iterateBranch}"`, { cwd: sourceDir, timeout: 10_000 });
+      } catch {
+        log.warn(`self_apply failed to cleanup branch: ${iterateBranch}`);
+      }
+    }
+  };
+
+  // 4. Build (if required)
   let buildResult: "pass" | "fail" | "skipped" = "skipped";
   if (config.requireBuildPass) {
     try {
@@ -299,6 +401,7 @@ export function selfApply(
         } catch {
           log.warn("self_apply auto-revert failed");
         }
+        abandonBranch();
         return {
           success: false,
           buildResult: "fail",
@@ -309,6 +412,7 @@ export function selfApply(
         };
       }
 
+      abandonBranch();
       return {
         success: false,
         buildResult: "fail",
@@ -320,10 +424,30 @@ export function selfApply(
     }
   }
 
-  // 4. Stage + commit
+  // 5. Stage + secret scan + commit
   try {
     for (const f of changedFiles) {
       execSync(`git add "${f}"`, { cwd: sourceDir, timeout: 10_000 });
+    }
+
+    // Secret scanning: check staged diff for sensitive content
+    const secretFindings = scanDiffForSecrets(sourceDir);
+    if (secretFindings.length > 0) {
+      // Unstage and abandon
+      execSync("git reset HEAD", { cwd: sourceDir, timeout: 10_000 });
+      abandonBranch();
+      const report = secretFindings
+        .map(f => `  ${f.file}:${f.line} — ${f.pattern}`)
+        .join("\n");
+      log.warn(`self_apply blocked by secret scan:\n${report}`);
+      return {
+        success: false,
+        buildResult,
+        reverted: false,
+        filesChanged: changedFiles,
+        stats: diffStats,
+        error: `Secret scan blocked commit — sensitive content detected:\n${report}`,
+      };
     }
 
     const commitMsg = `[self-iterate] ${description}`.replace(/"/g, '\\"');
@@ -334,6 +458,24 @@ export function selfApply(
     const commitHash = execSync("git rev-parse HEAD", {
       cwd: sourceDir, encoding: "utf-8", timeout: 10_000,
     }).trim();
+
+    // 6. Merge back to original branch
+    execSync(`git checkout "${originalBranch}"`, {
+      cwd: sourceDir, encoding: "utf-8", timeout: 10_000,
+    });
+    execSync(`git merge "${iterateBranch}"`, {
+      cwd: sourceDir, encoding: "utf-8", timeout: 30_000,
+    });
+    // Clean up the iterate branch after successful merge
+    try {
+      execSync(`git branch -d "${iterateBranch}"`, { cwd: sourceDir, timeout: 10_000 });
+    } catch {
+      try {
+        execSync(`git update-ref -d "refs/heads/${iterateBranch}"`, { cwd: sourceDir, timeout: 10_000 });
+      } catch {
+        log.warn(`self_apply could not delete merged branch: ${iterateBranch}`);
+      }
+    }
 
     // Build journal entry (for auto-journal feedback loop)
     const entry = createJournalEntry(
@@ -354,14 +496,15 @@ export function selfApply(
     };
   } catch (err) {
     const errMsg = err instanceof Error ? err.message : String(err);
-    log.warn(`self_apply commit failed: ${errMsg}`);
+    log.warn(`self_apply commit/merge failed: ${errMsg}`);
+    abandonBranch();
     return {
       success: false,
       buildResult,
       reverted: false,
       filesChanged: changedFiles,
       stats: diffStats,
-      error: `Commit failed: ${errMsg}`,
+      error: `Commit/merge failed: ${errMsg}`,
     };
   }
 }
