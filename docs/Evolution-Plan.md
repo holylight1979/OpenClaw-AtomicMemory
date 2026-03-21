@@ -299,6 +299,7 @@ Agent commit → GitHub Actions trigger
 | **3** | Self-evolution 基礎（workspace scope + safeBins + 流程驗證） | 2 | 2A+2.5 | |
 | **4** | `/evolve` Skill 封裝 | 1-2 | 3 | |
 | **5** | External CI/CD pipeline | 2-3 | 4（可選） | |
+| **6** | 跨領域理論深度研究 + OETAV 架構設計 | 2 | 4 | ✅ 完成 |
 
 ### Phase 2A 的可選前置：統一 permission resolution
 
@@ -670,3 +671,64 @@ Agent commit → GitHub Actions trigger
 | `_AIDocs/_CHANGELOG.md` | Phase 5 記錄 |
 | `_AIDocs/Core-AutoReply-Functions.md` | Guest 攔截文件 |
 | `_AIDocs/Extensions.md` | atomic-memory 描述更新 |
+
+---
+
+## 十三、Phase 6 跨領域理論深度研究 + OETAV 架構設計 — 2026-03-21
+
+> **狀態：✅ 已完成**（架構設計 + 規格書，尚未實作程式碼）
+
+### 目標
+
+以 17 個跨領域理論（數學/控制論、哲學/認識論、複雜系統、AI 認知、東方哲學）加固 OETAV 循環架構，將每個理論洞察轉化為具體 TypeScript 介面與演算法設計。
+
+### 產出文件
+
+| 文件 | 說明 |
+|------|------|
+| `docs/Self-Iteration-Architecture.md` | OETAV 完整架構（含第六章跨領域理論落地設計、14 條不變量、Phase A-F 計畫） |
+| `docs/Self-Iteration-Spec.md` | 8 模組 TypeScript 介面與演算法規格（M1-M8，零歧義實作參照） |
+
+### 8 個新模組（Spec M1-M8）
+
+| 模組 | 檔案 | 對應理論 | Phase |
+|------|------|---------|-------|
+| M1 | `convergence-health.ts` | 不動點收斂 + Lyapunov 穩定性 | B+D |
+| M2 | `entropy-signal.ts` | Shannon 熵 + 自組織臨界性 | A |
+| M3 | `identity-checker.ts` | Ship of Theseus 身份不變量 | F |
+| M4 | `threshold-balancer.ts` | 反思平衡 + 知行合一 + 無為 | B |
+| M5 | `self-critique.ts` | Constitutional AI + Reflexion + 反辯者 | C |
+| M6 | `transfer-algorithm.ts` | 記憶鞏固 + ACT-R 增強 | F |
+| M7 | `ttl-balance.ts` | 耗散結構 + 觀測者效應 | A+D |
+| M8 | `metacognition-score.ts` | 元認知 + Gödel 邊界 + DSPy | D |
+
+### OETAV 實作 Phase 計畫
+
+| Phase | 內容 | 預估 Sessions |
+|-------|------|--------------|
+| A | Signal Collector + Evidence Accumulator + S9 熵信號 + 觀測開銷 | 1 |
+| B | Threshold Evaluator + Proposal Generator + 收斂偵測 + 反思平衡 | 1 |
+| C | Auto Executor + Constitutional 批評 + 反辯者 | 1 |
+| D | Outcome Tracker + Lyapunov 健康 + DSPy metrics + Reflexion + 元認知 | 1-2 |
+| E | Confirm Executor + Code Actions | 1-2 |
+| F | Identity Checker + 記憶鞏固增強 + ACT-R 動態閾值 + TTL 平衡 | 1-2 |
+
+```
+Phase A ──→ Phase B ──→ Phase C ──→ Phase D ──→ Phase E
+                                                  ↑
+Phase F（獨立，僅需 atom store + 現有 engines）     │
+                                                  └── 可平行
+```
+
+### 新增不變量（#12-#14）
+
+| # | 不變量 | 說明 |
+|---|--------|------|
+| 12 | 身份保持 | auto 動作不得修改 essential atoms |
+| 13 | 反辯者閘門 | overSpeculationScore ≥ 0.6 → 降級或拒絕 |
+| 14 | 知行合一 | stale evidence（≥ staleCycleThreshold）觸發衰減 |
+
+### 前置條件
+
+- Phase 4 `/iterate` 指令 ✅
+- Phase 5 測試驗證 ✅
