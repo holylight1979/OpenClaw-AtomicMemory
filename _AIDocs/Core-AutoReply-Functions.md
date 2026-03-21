@@ -154,8 +154,8 @@ src/context-engine/           (5 檔, ~432 行) — 上下文引擎
 
 | Export | 簽名 | 說明 | 入口類型 |
 |--------|------|------|----------|
-| `CommandAuthorization` | type | 指令授權結果型別 | Type |
-| `resolveCommandAuthorization` | `(params) → CommandAuthorization` | 解析使用者對指令的授權等級（owner/allowed/denied） | Core |
+| `CommandAuthorization` | type | 指令授權結果型別（含 `senderPermissionLevel: PermissionLevel`） | Type |
+| `resolveCommandAuthorization` | `(params) → CommandAuthorization` | 解析使用者授權 — 整合 `resolveEffectivePermissionLevel()`，回傳四級權限（owner/admin/user/guest）+ allowlist 判定。Guest 條件：不在 allowlist 且非 owner/admin | Core |
 
 #### `command-detection.ts`（88 行）
 
@@ -706,7 +706,7 @@ src/context-engine/           (5 檔, ~432 行) — 上下文引擎
 |--------|------|------|----------|
 | `ResetCommandAction` | type `"new" \| "reset"` | 重設指令動作 | Type |
 | `emitResetCommandHooks` | `async (params) → void` | 發射 session reset hooks | Core |
-| `handleCommands` | `async (params) → CommandHandlerResult` | **指令處理主入口**（路由到各 handler） | Entry |
+| `handleCommands` | `async (params) → CommandHandlerResult` | **指令處理主入口** — 含權限閘門：`findCommandByTextAlias()` 查指令定義 → `hasMinLevel(senderLevel, cmd.permissionLevel)` 比對 → guest 執行非白名單指令回傳 `⛔ requires {level}` | Entry |
 
 #### `commands-export-session.ts`（203 行）
 
@@ -989,7 +989,7 @@ src/context-engine/           (5 檔, ~432 行) — 上下文引擎
 
 | Export | 簽名 | 說明 | 入口類型 |
 |--------|------|------|----------|
-| `getReplyFromConfig` | `async (ctx, opts?, cfg?) → ReplyPayload \| ReplyPayload[] \| undefined` | **主 reply 入口**（config → session → directives → agent run） | Entry |
+| `getReplyFromConfig` | `async (ctx, opts?, cfg?) → ReplyPayload \| ReplyPayload[] \| undefined` | **主 reply 入口**（config → session → directives → **guest 攔截** → agent run）。Guest 非指令訊息在 inline actions 之後、agent run 之前攔截，直接回傳固定文字「你尚未取得使用權限。請使用 /request-access 提請認證。」，不進 LLM pipeline | Entry |
 
 #### `groups.ts`（185 行）
 
@@ -1723,8 +1723,9 @@ Channel Adapter
                  ├→ get-reply-directives.ts: resolveReplyDirectives()
                  │    ├→ directive-handling.impl.ts: handleDirectiveOnly() ← 純 directive 路徑
                  │    ├→ directive-handling.fast-lane.ts: applyInlineDirectivesFastLane()
-                 │    └→ commands-core.ts: handleCommands()    ← 指令路徑
+                 │    └→ commands-core.ts: handleCommands()    ← 指令路徑（含 permissionLevel gate）
                  ├→ get-reply-inline-actions.ts: handleInlineActions()  ← Inline action 路徑
+                 ├─ [Guest gate] senderPermissionLevel === "guest" → 固定回覆（不進 LLM）
                  └→ get-reply-run.ts: runPreparedReply()       ← Agent run 路徑
                       ├→ model-selection.ts: createModelSelectionState()
                       ├→ agent-runner.ts: runReplyAgent()      ← Agent 執行

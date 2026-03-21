@@ -1,6 +1,6 @@
 # OpenClaw _AIDocs Index
 
-> 專案知識庫。2026-03-12 建立，2026-03-21 更新（進化計畫 Phase 4 完成，29 份文件）。
+> 專案知識庫。2026-03-12 建立，2026-03-21 更新（Phase 5 Guest E2E 驗證完成，28 份文件）。
 
 | # | 文件 | 說明 |
 |---|------|------|
@@ -16,7 +16,7 @@
 | 10 | [UI-Skills-Apps.md](UI-Skills-Apps.md) | UI Dashboard + 51 Skills + Scripts + Native Apps |
 | 11 | [Docs-Config-Map.md](Docs-Config-Map.md) | MD 文件與設定檔角色對照 — 運作流程、Workspace 注入、設定檔協作 |
 | 12 | [FileTree.md](FileTree.md) | 完整檔案樹 + 結構映射 — 6,350+ 檔案、47 src 子目錄、44 extensions、差異分析 |
-| 13 | [Evolution-Plan.md](Evolution-Plan.md) | 進化計畫 — 指令權限矩陣、多層級權限方案、自我迭代路線圖、Phase 1~4 實作記錄 |
+| 13 | *(已搬移至 docs/Evolution-Plan.md)* | 進化計畫 — 指令權限矩陣、多層級權限方案、自我迭代路線圖（規劃文件，已完成搬出 _AIDocs） |
 | 29 | [Self-Iteration-Guide.md](Self-Iteration-Guide.md) | 自我迭代使用指南 — /iterate 指令、4 工具、回饋循環、安全機制、典型流程 |
 | 14 | [Core-Routing-Functions.md](Core-Routing-Functions.md) | Routing 函式級索引 — 6 檔 1,272 行、全 export 簽名、7 層 tier 匹配、呼叫圖 |
 | 15 | [Core-ACP-Functions.md](Core-ACP-Functions.md) | ACP 函式級索引 — 36 檔 6,500+ 行、全 export 簽名、server/client/translator/control-plane/runtime/persistent-bindings、呼叫圖 |

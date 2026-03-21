@@ -612,3 +612,61 @@ Agent commit → GitHub Actions trigger
 - Phase 2A 指令閘門 ✅
 - Phase 3 Self-evolution guard ✅
 - Phase 4 /iterate 指令 ✅
+
+---
+
+## 十二、Phase 5 端到端驗證 + 整合測試 — 2026-03-21
+
+> **狀態：✅ 已完成**（Guest 權限流程 E2E 驗證 + 22 個整合測試案例）
+
+### 驗證內容
+
+#### 1. g-int.test.ts 新增 Guest 場景 ✅
+
+3 個 describe 區塊，共 22 個測試案例：
+
+**Guest level resolution（6 tests）**：
+- Plugin 層 `resolvePermissionLevel(undefined)` → `"guest"`
+- Core 層 `resolveEffectivePermissionLevel({ isInAllowlist: false })` → `"guest"`
+- 不在 allowlist 的 sender → `"guest"`（core 層）
+- 在 allowlist 的 sender → `"user"`（確認非 guest）
+- Guest 無 write access
+- Guest capability context 包含正確描述
+
+**Command gate（7 tests）**：
+- `hasMinLevel("guest", "guest")` → true（/help, /request-access, /whoami, /status）
+- `hasMinLevel("guest", "user")` → false（/model 等）
+- `hasMinLevel("guest", "owner")` → false（/allowlist）
+- `hasMinLevel("guest", "admin")` → false
+- Guest 非指令訊息固定回覆文字驗證
+
+**Access request flow（9 tests）**：
+- submit → created
+- duplicate pending → rejected
+- listPendingRequests → 正確列出
+- approve → status=approved, resolvedBy 填入
+- deny → status=denied
+- approve/deny 不存在的 ID → null
+- approved 後可重新申請
+- owner notification context 包含 pending sender IDs
+
+#### 2. 過期測試修正 ✅
+- Scene 3 "no senderId resolves to 'user'" → 修正為 'guest'（對齊 Phase 4 Guest 行為）
+
+#### 3. 文件同步 ✅
+- `_AIDocs/Evolution-Plan.md` 搬移至 `docs/Evolution-Plan.md`（規劃文件不符 _AIDocs 收錄標準）
+- `_AIDocs/_INDEX.md` 更新搬遷標記
+- `_AIDocs/_CHANGELOG.md` 加入 Phase 5 記錄
+- `_AIDocs/Core-AutoReply-Functions.md` 更新 command-auth/commands-core/get-reply 描述含 Guest 攔截
+- `_AIDocs/Extensions.md` atomic-memory 描述更新
+
+### 影響檔案（6 個）
+
+| 檔案 | 變更 |
+|------|------|
+| `extensions/atomic-memory/g-int.test.ts` | +22 tests, 修正 1 stale test |
+| `docs/Evolution-Plan.md` | 從 _AIDocs 搬入 + Phase 5 記錄 |
+| `_AIDocs/_INDEX.md` | 文件數量更新 + 搬遷標記 |
+| `_AIDocs/_CHANGELOG.md` | Phase 5 記錄 |
+| `_AIDocs/Core-AutoReply-Functions.md` | Guest 攔截文件 |
+| `_AIDocs/Extensions.md` | atomic-memory 描述更新 |

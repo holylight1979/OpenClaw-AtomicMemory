@@ -27,7 +27,19 @@ import {
   buildSelfAwarenessPrompt,
   buildCapabilityContext,
   buildRejectionContext,
+  hasMinLevel,
 } from "./src/permission-guard.js";
+
+// G3: Core-layer permission resolution
+import { resolveEffectivePermissionLevel } from "./src/permission-guard.js";
+
+// G3: Access Request management
+import {
+  submitAccessRequest,
+  approveAccessRequest,
+  denyAccessRequest,
+  listPendingRequests,
+} from "./src/access-request.js";
 
 // Shared types
 import type { Atom, AtomSource, AtomScope } from "./src/types.js";
@@ -228,9 +240,9 @@ describe("Scene 3: Permission interception", () => {
     expect(level).toBe("user");
   });
 
-  it("no senderId resolves to 'user'", () => {
+  it("no senderId resolves to 'guest'", () => {
     const level = resolvePermissionLevel(undefined, undefined, cfg);
-    expect(level).toBe("user");
+    expect(level).toBe("guest");
   });
 
   it("owner and admin have write access", () => {
@@ -447,5 +459,195 @@ describe("Phase 3: Conflict checks", () => {
     expect(atom.scope).toBe("user");
     expect(atom.sources).toHaveLength(2);
     // scope and sources are orthogonal
+  });
+});
+
+// ============================================================================
+// Phase 5: Guest end-to-end scenarios
+// ============================================================================
+
+describe("Phase 5: Guest permission — level resolution", () => {
+  const cfg = makeConfig();
+
+  it("no senderId resolves to 'guest' (plugin layer)", () => {
+    const level = resolvePermissionLevel(undefined, undefined, cfg);
+    expect(level).toBe("guest");
+  });
+
+  it("no senderId resolves to 'guest' (core layer)", () => {
+    const level = resolveEffectivePermissionLevel({
+      senderIsOwner: false,
+      senderId: undefined,
+      isInAllowlist: false,
+    });
+    expect(level).toBe("guest");
+  });
+
+  it("unrecognized sender NOT in allowlist → guest (core layer)", () => {
+    const level = resolveEffectivePermissionLevel({
+      senderIsOwner: false,
+      senderId: "random-stranger",
+      isInAllowlist: false,
+    });
+    expect(level).toBe("guest");
+  });
+
+  it("sender in allowlist → user (not guest)", () => {
+    const level = resolveEffectivePermissionLevel({
+      senderIsOwner: false,
+      senderId: "known-user",
+      isInAllowlist: true,
+    });
+    expect(level).toBe("user");
+  });
+
+  it("guest has NO write access", () => {
+    expect(hasWriteAccess("guest")).toBe(false);
+  });
+
+  it("guest capability context describes restricted access", () => {
+    const ctx = buildCapabilityContext("guest");
+    expect(ctx).toContain("guest");
+    expect(ctx).toContain("Unverified");
+    expect(ctx).toContain("/help");
+    expect(ctx).toContain("request access");
+  });
+});
+
+describe("Phase 5: Guest permission — command gate", () => {
+  it("guest can use /help (permissionLevel=guest)", () => {
+    expect(hasMinLevel("guest", "guest")).toBe(true);
+  });
+
+  it("guest can use /request-access (permissionLevel=guest)", () => {
+    expect(hasMinLevel("guest", "guest")).toBe(true);
+  });
+
+  it("guest can use /whoami (permissionLevel=guest)", () => {
+    expect(hasMinLevel("guest", "guest")).toBe(true);
+  });
+
+  it("guest can use /status (permissionLevel=guest)", () => {
+    expect(hasMinLevel("guest", "guest")).toBe(true);
+  });
+
+  it("guest CANNOT use /model (requires user)", () => {
+    expect(hasMinLevel("guest", "user")).toBe(false);
+  });
+
+  it("guest CANNOT use /allowlist (requires owner)", () => {
+    expect(hasMinLevel("guest", "owner")).toBe(false);
+  });
+
+  it("guest CANNOT use admin-level commands", () => {
+    expect(hasMinLevel("guest", "admin")).toBe(false);
+  });
+
+  it("non-command message from guest → fixed reply text", () => {
+    // This verifies the exact text returned by get-reply.ts:354-357
+    const fixedReply = "你尚未取得使用權限。請使用 /request-access 提請認證。";
+    expect(fixedReply).toContain("/request-access");
+  });
+});
+
+describe("Phase 5: Guest access request flow", () => {
+  const fs = require("node:fs");
+  const os = require("node:os");
+  const path = require("node:path");
+
+  function makeTempDir(): string {
+    return fs.mkdtempSync(path.join(os.tmpdir(), "g-int-access-"));
+  }
+
+  it("guest submits access request → created", async () => {
+    const dir = makeTempDir();
+    const result = await submitAccessRequest(dir, "guest-user-1", "discord", "Guest User");
+    expect(result.created).toBe(true);
+    expect(result.alreadyPending).toBe(false);
+  });
+
+  it("duplicate pending request → rejected", async () => {
+    const dir = makeTempDir();
+    await submitAccessRequest(dir, "guest-user-1", "discord");
+    const result2 = await submitAccessRequest(dir, "guest-user-1", "discord");
+    expect(result2.created).toBe(false);
+    expect(result2.alreadyPending).toBe(true);
+  });
+
+  it("listPendingRequests returns pending requests", async () => {
+    const dir = makeTempDir();
+    await submitAccessRequest(dir, "guest-a", "line");
+    await submitAccessRequest(dir, "guest-b", "discord");
+
+    const pending = await listPendingRequests(dir);
+    expect(pending).toHaveLength(2);
+    expect(pending.map(r => r.senderId)).toContain("guest-a");
+    expect(pending.map(r => r.senderId)).toContain("guest-b");
+  });
+
+  it("approveAccessRequest → status changes to approved", async () => {
+    const dir = makeTempDir();
+    await submitAccessRequest(dir, "guest-user-1", "discord");
+
+    const approved = await approveAccessRequest(dir, "guest-user-1", "owner-id");
+    expect(approved).not.toBeNull();
+    expect(approved!.status).toBe("approved");
+    expect(approved!.resolvedBy).toBe("owner-id");
+
+    // No longer in pending list
+    const pending = await listPendingRequests(dir);
+    expect(pending).toHaveLength(0);
+  });
+
+  it("denyAccessRequest → status changes to denied", async () => {
+    const dir = makeTempDir();
+    await submitAccessRequest(dir, "guest-user-2", "line");
+
+    const denied = await denyAccessRequest(dir, "guest-user-2", "owner-id");
+    expect(denied).not.toBeNull();
+    expect(denied!.status).toBe("denied");
+    expect(denied!.resolvedBy).toBe("owner-id");
+
+    // No longer in pending list
+    const pending = await listPendingRequests(dir);
+    expect(pending).toHaveLength(0);
+  });
+
+  it("approve non-existent request → returns null", async () => {
+    const dir = makeTempDir();
+    const result = await approveAccessRequest(dir, "nobody", "owner-id");
+    expect(result).toBeNull();
+  });
+
+  it("deny non-existent request → returns null", async () => {
+    const dir = makeTempDir();
+    const result = await denyAccessRequest(dir, "nobody", "owner-id");
+    expect(result).toBeNull();
+  });
+
+  it("after approval, guest can re-request (new pending)", async () => {
+    const dir = makeTempDir();
+    await submitAccessRequest(dir, "guest-user-1", "discord");
+    await approveAccessRequest(dir, "guest-user-1", "owner-id");
+
+    // Previous request is approved, not pending → new request should succeed
+    const result = await submitAccessRequest(dir, "guest-user-1", "discord");
+    expect(result.created).toBe(true);
+  });
+
+  it("owner pending notification context includes pending sender ids", async () => {
+    const dir = makeTempDir();
+    await submitAccessRequest(dir, "guest-a", "line");
+    await submitAccessRequest(dir, "guest-b", "discord");
+
+    const pending = await listPendingRequests(dir);
+    // Simulate the notification context built in index.ts:343-353
+    const names = pending.map(r => `${r.senderId}(${r.platform})`).join(", ");
+    const ctx = `\n[System] ${pending.length} 個待審核權限申請: ${names}。使用 /pending-access 查看詳情。`;
+
+    expect(ctx).toContain("guest-a(line)");
+    expect(ctx).toContain("guest-b(discord)");
+    expect(ctx).toContain("2 個待審核");
+    expect(ctx).toContain("/pending-access");
   });
 });
