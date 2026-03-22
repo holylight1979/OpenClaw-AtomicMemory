@@ -201,6 +201,35 @@ export type AtomicMemoryConfig = {
         /** Additional atom refs to mark as essential. */
         essentialAtomRefs: string[];
       };
+      /** Phase F: Transfer algorithm config (M6). */
+      transfer: {
+        enabled: boolean;
+        recurrenceWeight: number;
+        salienceWeight: number;
+        schemaWeight: number;
+        recencyWeight: number;
+        transferThreshold: number;
+        watchThreshold: number;
+      };
+      /** Phase F: Dynamic threshold config (M6). */
+      dynamicThreshold: {
+        enabled: boolean;
+        activationStrong: number;
+        activationWeak: number;
+        spacingGood: number;
+        spacingPoor: number;
+        minGapMs: number;
+      };
+      /** Phase F: Metacognition score config (M8). */
+      metacognition: {
+        enabled: boolean;
+      };
+      /** Phase F: Effectiveness measurement config (M8). */
+      effectiveness: {
+        enabled: boolean;
+        aggregation: "geometric" | "harmonic";
+        gamingDetectionThreshold: number;
+      };
     };
   };
   permission: {
@@ -323,7 +352,7 @@ export const atomicMemoryConfigSchema = {
 
     // selfIteration.autonomousIteration sub-config
     const autoIterRaw = (selfIterationRaw.autonomousIteration ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(autoIterRaw, ["enabled", "evidenceDecayRate", "entropy", "orderParameter", "flowBalance", "observerOverhead", "staleEvidence", "thresholdBalancer", "wuWei", "convergence", "healthScore", "selfCritique", "devilsAdvocate", "reflection", "identity"], "selfIteration.autonomousIteration config");
+    assertAllowedKeys(autoIterRaw, ["enabled", "evidenceDecayRate", "entropy", "orderParameter", "flowBalance", "observerOverhead", "staleEvidence", "thresholdBalancer", "wuWei", "convergence", "healthScore", "selfCritique", "devilsAdvocate", "reflection", "identity", "transfer", "dynamicThreshold", "metacognition", "effectiveness"], "selfIteration.autonomousIteration config");
 
     const entropyRaw = (autoIterRaw.entropy ?? {}) as Record<string, unknown>;
     assertAllowedKeys(entropyRaw, ["enabled", "rigidThreshold", "chaoticThreshold", "tierWeight"], "autonomousIteration.entropy config");
@@ -363,6 +392,18 @@ export const atomicMemoryConfigSchema = {
 
     const identityRaw = (autoIterRaw.identity ?? {}) as Record<string, unknown>;
     assertAllowedKeys(identityRaw, ["enabled", "checkIntervalSessions", "essentialAtomRefs"], "autonomousIteration.identity config");
+
+    const transferRaw = (autoIterRaw.transfer ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(transferRaw, ["enabled", "recurrenceWeight", "salienceWeight", "schemaWeight", "recencyWeight", "transferThreshold", "watchThreshold"], "autonomousIteration.transfer config");
+
+    const dynamicThresholdRaw = (autoIterRaw.dynamicThreshold ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(dynamicThresholdRaw, ["enabled", "activationStrong", "activationWeak", "spacingGood", "spacingPoor", "minGapMs"], "autonomousIteration.dynamicThreshold config");
+
+    const metacognitionRaw = (autoIterRaw.metacognition ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(metacognitionRaw, ["enabled"], "autonomousIteration.metacognition config");
+
+    const effectivenessRaw = (autoIterRaw.effectiveness ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(effectivenessRaw, ["enabled", "aggregation", "gamingDetectionThreshold"], "autonomousIteration.effectiveness config");
 
     // permission sub-config
     const permissionRaw = (cfg.permission ?? {}) as Record<string, unknown>;
@@ -505,6 +546,33 @@ export const atomicMemoryConfigSchema = {
             essentialAtomRefs: Array.isArray(identityRaw.essentialAtomRefs)
               ? (identityRaw.essentialAtomRefs as unknown[]).filter((v): v is string => typeof v === "string")
               : [],
+          },
+          transfer: {
+            enabled: boolOrDefault(transferRaw.enabled, true),
+            recurrenceWeight: numOrDefault(transferRaw.recurrenceWeight, 0.40, 0, 1),
+            salienceWeight: numOrDefault(transferRaw.salienceWeight, 0.25, 0, 1),
+            schemaWeight: numOrDefault(transferRaw.schemaWeight, 0.20, 0, 1),
+            recencyWeight: numOrDefault(transferRaw.recencyWeight, 0.15, 0, 1),
+            transferThreshold: numOrDefault(transferRaw.transferThreshold, 0.6, 0, 1),
+            watchThreshold: numOrDefault(transferRaw.watchThreshold, 0.3, 0, 1),
+          },
+          dynamicThreshold: {
+            enabled: boolOrDefault(dynamicThresholdRaw.enabled, true),
+            activationStrong: numOrDefault(dynamicThresholdRaw.activationStrong, 1.0, -10, 10),
+            activationWeak: numOrDefault(dynamicThresholdRaw.activationWeak, -0.5, -10, 10),
+            spacingGood: numOrDefault(dynamicThresholdRaw.spacingGood, 0.6, 0, 1),
+            spacingPoor: numOrDefault(dynamicThresholdRaw.spacingPoor, 0.3, 0, 1),
+            minGapMs: numOrDefault(dynamicThresholdRaw.minGapMs, 3_600_000, 0, 86_400_000),
+          },
+          metacognition: {
+            enabled: boolOrDefault(metacognitionRaw.enabled, true),
+          },
+          effectiveness: {
+            enabled: boolOrDefault(effectivenessRaw.enabled, true),
+            aggregation: (["geometric", "harmonic"] as const).includes(effectivenessRaw.aggregation as any)
+              ? (effectivenessRaw.aggregation as "geometric" | "harmonic")
+              : "geometric",
+            gamingDetectionThreshold: numOrDefault(effectivenessRaw.gamingDetectionThreshold, 0.65, 0, 1),
           },
         },
       },

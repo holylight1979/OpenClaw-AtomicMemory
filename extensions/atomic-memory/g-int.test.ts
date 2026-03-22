@@ -111,6 +111,10 @@ function makeConfig(overrides?: Partial<AtomicMemoryConfig>): AtomicMemoryConfig
         devilsAdvocate: { enabled: true, overSpeculationThreshold: 0.7 },
         reflection: { enabled: false, maxBufferSize: 10, maxContextTokens: 200 },
         identity: { enabled: false, checkIntervalSessions: 10, essentialAtomRefs: [] },
+        transfer: { enabled: false, recurrenceWeight: 0.40, salienceWeight: 0.25, schemaWeight: 0.20, recencyWeight: 0.15, transferThreshold: 0.6, watchThreshold: 0.3 },
+        dynamicThreshold: { enabled: false, activationStrong: 1.0, activationWeak: -0.5, spacingGood: 0.6, spacingPoor: 0.3, minGapMs: 3600000 },
+        metacognition: { enabled: false },
+        effectiveness: { enabled: false, aggregation: "geometric" as const, gamingDetectionThreshold: 0.65 },
       },
     },
     permission: {

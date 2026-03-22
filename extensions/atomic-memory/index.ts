@@ -74,6 +74,16 @@ import {
   createIdentityBaseline,
   formatIdentityDriftSummary,
 } from "./src/identity-checker.js";
+import {
+  prioritizeTransfer,
+  formatTransferSummary,
+} from "./src/transfer-algorithm.js";
+import {
+  computeMetacognitionScore,
+  computeEffectiveness,
+  classifyVerificationRequirement,
+  formatMetacognitionSummary,
+} from "./src/metacognition-score.js";
 import type { TierDistribution, CategoryDistribution, MetricsSnapshot } from "./src/types.js";
 import { ACTION_DECISION_LEVEL } from "./src/types.js";
 import { buildEvolveGuardContext, canTriggerEvolution } from "./src/evolve-guard.js";
@@ -1096,8 +1106,9 @@ function registerHooks(state: PluginState): void {
 
               // 6. Tick outcome verification (increment counters + verify mature records)
               let verifiedOutcomes: import("./src/types.js").OutcomeResult[] = [];
+              let baselineSnapshot = metricsSnapshot; // fallback to current snapshot
               try {
-                const baselineSnapshot = await snapshotMetrics(store, sessionKey);
+                baselineSnapshot = await snapshotMetrics(store, sessionKey);
                 verifiedOutcomes = await tickAndVerify(
                   atomStorePath,
                   store,
@@ -1175,6 +1186,92 @@ function registerHooks(state: PluginState): void {
                   // Fail-safe: no baseline → silently skip
                 } catch (err) {
                   iterationLog.warn(`Phase E identity check failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+              }
+
+              // 9. Phase F: Transfer Algorithm — prioritize episodic → atom transfer
+              if (autoCfg.transfer.enabled) {
+                try {
+                  const allEpisodicsFull = await listEpisodicSummaries(atomStorePath);
+                  const existingAtomsFull = await store.list();
+                  const transferPlan = prioritizeTransfer(allEpisodicsFull, existingAtomsFull, {
+                    recurrenceWeight: autoCfg.transfer.recurrenceWeight,
+                    salienceWeight: autoCfg.transfer.salienceWeight,
+                    schemaWeight: autoCfg.transfer.schemaWeight,
+                    recencyWeight: autoCfg.transfer.recencyWeight,
+                    transferThreshold: autoCfg.transfer.transferThreshold,
+                    watchThreshold: autoCfg.transfer.watchThreshold,
+                  });
+                  if (transferPlan.readyToTransfer.length > 0) {
+                    iterationLog.info(
+                      `Phase F transfer: ${transferPlan.readyToTransfer.length} ready, ` +
+                      `${transferPlan.watchList.length} watch`,
+                    );
+                  }
+                } catch (err) {
+                  iterationLog.warn(`Phase F transfer failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+              }
+
+              // 10. Phase F: Metacognition Score
+              if (autoCfg.metacognition.enabled) {
+                try {
+                  let metacogWisdom = wisdomMetrics;
+                  if (!metacogWisdom && cfg.wisdom.enabled) {
+                    try { metacogWisdom = await loadReflectionMetrics(cfg.atomStorePath); } catch { /* ok */ }
+                  }
+                  const executedRecords = await loadExecutedRecords(atomStorePath);
+                  const totalOutcomes = executedRecords.filter((r) => r.outcome).length;
+                  const successOutcomes = executedRecords.filter((r) => r.outcome?.verdict === "improved").length;
+
+                  const metacogResult = computeMetacognitionScore({
+                    blindSpots: metacogWisdom?.blindSpots ?? [],
+                    firstApproachAccuracy: metacogWisdom?.firstApproachAccuracy ?? {},
+                    silenceAccuracy: metacogWisdom?.silenceAccuracy ?? { heldBackOk: 0, heldBackMissed: 0 },
+                    recallHitRate: metricsSnapshot.recallAvgScore ?? 0.5,
+                    correctionRate: metricsSnapshot.correctionRate ?? 0,
+                    proposalSuccessRate: totalOutcomes > 0 ? successOutcomes / totalOutcomes : 0.5,
+                    maturityPhase: phase,
+                    totalObservations: iterState.totalEpisodics,
+                  });
+                  metricsSnapshot.metacognitionScore = metacogResult.score;
+                  iterationLog.info(
+                    `Phase F metacognition: ${metacogResult.score.toFixed(3)} (${metacogResult.level})`,
+                  );
+
+                  // 11. Phase F: Effectiveness measurement
+                  if (autoCfg.effectiveness.enabled && verifiedOutcomes.length > 0) {
+                    try {
+                      const effectivenessReport = computeEffectiveness(
+                        baselineSnapshot,
+                        metricsSnapshot,
+                        verifiedOutcomes,
+                        {
+                          aggregation: autoCfg.effectiveness.aggregation,
+                          gamingDetectionThreshold: autoCfg.effectiveness.gamingDetectionThreshold,
+                        },
+                      );
+                      iterationLog.info(
+                        `Phase F effectiveness: ${effectivenessReport.compositeScore.toFixed(3)} (${effectivenessReport.assessment})`,
+                      );
+                    } catch (err) {
+                      iterationLog.warn(`Phase F effectiveness failed: ${err instanceof Error ? err.message : String(err)}`);
+                    }
+                  }
+
+                  // 12. Phase F: Gödel boundary — override decisionLevel if needed
+                  for (const proposal of proposals) {
+                    const godelResult = classifyVerificationRequirement(proposal.action);
+                    if (godelResult.classification === "undecidable") {
+                      proposal.decisionLevel = "block";
+                      iterationLog.warn(`Phase F Gödel: ${proposal.id.slice(0, 8)} → undecidable (blocked)`);
+                    } else if (godelResult.classification === "requires-external" && proposal.decisionLevel === "auto") {
+                      proposal.decisionLevel = "confirm";
+                      iterationLog.info(`Phase F Gödel: ${proposal.id.slice(0, 8)} → requires-external (escalated to confirm)`);
+                    }
+                  }
+                } catch (err) {
+                  iterationLog.warn(`Phase F metacognition failed: ${err instanceof Error ? err.message : String(err)}`);
                 }
               }
             } catch (err) {
@@ -2508,6 +2605,52 @@ function registerCommands(state: PluginState): void {
           reflectionSummary = "  Error loading reflection data.";
         }
 
+        // Phase F: Transfer Readiness
+        let transferSummary: string;
+        try {
+          const allEpisodics = await listEpisodicSummaries(atomStorePath);
+          const { AtomStore: AS } = await import("./src/atom-store.js");
+          const tempStore = new AS(atomStorePath);
+          const existingAtoms = await tempStore.list();
+          const autoCfg = cfg.selfIteration.autonomousIteration;
+          const transferPlan = prioritizeTransfer(allEpisodics, existingAtoms, {
+            recurrenceWeight: autoCfg.transfer.recurrenceWeight,
+            salienceWeight: autoCfg.transfer.salienceWeight,
+            schemaWeight: autoCfg.transfer.schemaWeight,
+            recencyWeight: autoCfg.transfer.recencyWeight,
+            transferThreshold: autoCfg.transfer.transferThreshold,
+            watchThreshold: autoCfg.transfer.watchThreshold,
+          });
+          transferSummary = formatTransferSummary(transferPlan);
+        } catch {
+          transferSummary = "  Error loading transfer data.";
+        }
+
+        // Phase F: Metacognition
+        let metacognitionSummary: string;
+        try {
+          const executedRecords = await loadExecutedRecords(atomStorePath);
+          const totalOutcomes = executedRecords.filter((r) => r.outcome).length;
+          const successOutcomes = executedRecords.filter((r) => r.outcome?.verdict === "improved").length;
+          let mcWisdom = null;
+          if (cfg.wisdom.enabled) {
+            try { mcWisdom = await loadReflectionMetrics(cfg.atomStorePath); } catch { /* ok */ }
+          }
+          const metacogResult = computeMetacognitionScore({
+            blindSpots: mcWisdom?.blindSpots ?? [],
+            firstApproachAccuracy: mcWisdom?.firstApproachAccuracy ?? {},
+            silenceAccuracy: mcWisdom?.silenceAccuracy ?? { heldBackOk: 0, heldBackMissed: 0 },
+            recallHitRate: 0.5,
+            correctionRate: 0,
+            proposalSuccessRate: totalOutcomes > 0 ? successOutcomes / totalOutcomes : 0.5,
+            maturityPhase: iterState.maturityPhase,
+            totalObservations: iterState.totalEpisodics,
+          });
+          metacognitionSummary = formatMetacognitionSummary(metacogResult);
+        } catch {
+          metacognitionSummary = "  Error computing metacognition score.";
+        }
+
         return {
           text: [
             "## OETAV Self-Iteration Status",
@@ -2537,6 +2680,12 @@ function registerCommands(state: PluginState): void {
             "",
             `### Reflection Buffer`,
             reflectionSummary,
+            "",
+            `### Transfer Readiness`,
+            transferSummary,
+            "",
+            `### Metacognition`,
+            metacognitionSummary,
           ].join("\n"),
         };
       }
@@ -2582,6 +2731,61 @@ function registerCommands(state: PluginState): void {
         const atomStorePath = cfg.atomStorePath;
         const summary = await formatExecutedSummary(atomStorePath);
         return { text: `## OETAV Execution History\n\n${summary}` };
+      }
+
+      // ── /iterate analyze atom:<name> — dynamic threshold info for an atom ──
+      if (subCmd === "analyze" && subArgs && subArgs.startsWith("atom:")) {
+        const atomName = subArgs.slice(5).trim();
+        if (!atomName) return { text: "Usage: /iterate analyze atom:<atom-name>" };
+        const atomStorePath = cfg.atomStorePath;
+        try {
+          const { computeDynamicThreshold, computeSpacingQuality } = await import("./src/transfer-algorithm.js");
+          const { loadLog: _loadLog } = await import("./src/actr-scoring.js").then(() => {
+            // Access log is loaded via computeActivation internally;
+            // we need the raw timestamps for spacing quality
+            return { loadLog: null };
+          });
+          // Load access log directly
+          const { readFile } = await import("node:fs/promises");
+          const { join } = await import("node:path");
+          let timestamps: number[] = [];
+          try {
+            const logPath = join(atomStorePath, "_actr", "access-log.json");
+            const raw = await readFile(logPath, "utf-8");
+            const accessLog = JSON.parse(raw) as Record<string, number[]>;
+            timestamps = accessLog[atomName] ?? [];
+          } catch { /* no log yet */ }
+
+          // Look up atom confidence
+          const atom = (await store.list()).find((a) => a.id === atomName);
+          if (!atom) return { text: `Atom "${atomName}" not found.` };
+
+          const dtCfg = cfg.selfIteration.autonomousIteration.dynamicThreshold;
+          const result = await computeDynamicThreshold(atomName, atom.confidence, atomStorePath, timestamps, {
+            activationStrong: dtCfg.activationStrong,
+            activationWeak: dtCfg.activationWeak,
+            spacingGood: dtCfg.spacingGood,
+            spacingPoor: dtCfg.spacingPoor,
+            minGapMs: dtCfg.minGapMs,
+          });
+          const spacing = computeSpacingQuality(timestamps, dtCfg.minGapMs);
+
+          return {
+            text: [
+              `## Dynamic Threshold: ${atomName}`,
+              `Confidence: ${atom.confidence}`,
+              `Confirmations: ${atom.confirmations}`,
+              `ACT-R Activation: ${result.activation.toFixed(3)}`,
+              `Spacing Quality: ${spacing.toFixed(3)}`,
+              `Base Threshold: ${atom.confidence === "[臨]" ? 2 : 4}`,
+              `Dynamic Threshold: ${result.threshold}`,
+              `Adjustment: ${result.adjustment} — ${result.reason}`,
+              `Access History: ${timestamps.length} entries`,
+            ].join("\n"),
+          };
+        } catch (err) {
+          return { text: `Error analyzing atom: ${err instanceof Error ? err.message : String(err)}` };
+        }
       }
 
       if (!codeModCfg.enabled) {

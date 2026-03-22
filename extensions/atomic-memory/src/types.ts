@@ -776,6 +776,79 @@ export type DriftReport = {
 };
 
 // ============================================================================
+// OETAV Phase F — Transfer Algorithm Types (M6)
+// ============================================================================
+
+export type TransferCandidate = {
+  topic: string;
+  sessionKeys: string[];
+  priority: number; // 0-1
+  scores: {
+    recurrence: number;
+    schemaConsistency: number;
+    salience: number;
+    recency: number;
+  };
+  action: "transfer" | "watch" | "skip";
+};
+
+export type TransferPlan = {
+  candidates: TransferCandidate[];
+  readyToTransfer: TransferCandidate[];
+  watchList: TransferCandidate[];
+};
+
+export type DynamicThreshold = {
+  threshold: number;
+  activation: number;
+  spacingQuality: number;
+  adjustment: "lower" | "keep" | "raise";
+  reason: string;
+};
+
+// ============================================================================
+// OETAV Phase F — Metacognition Score Types (M8)
+// ============================================================================
+
+export type MetacognitionInputs = {
+  blindSpots: string[];
+  firstApproachAccuracy: Partial<Record<string, { correct: number; total: number }>>;
+  silenceAccuracy: { heldBackOk: number; heldBackMissed: number };
+  recallHitRate: number;
+  correctionRate: number;
+  proposalSuccessRate: number;
+  maturityPhase: MaturityPhase;
+  totalObservations: number;
+};
+
+export type MetacognitionResult = {
+  score: number;
+  components: { monitoring: number; control: number; calibration: number; blindSpotPenalty: number };
+  confidence: number;
+  level: "uncalibrated" | "developing" | "calibrated" | "metacognitive";
+};
+
+export type EffectivenessReport = {
+  compositeScore: number;
+  deltas: {
+    recallImprovement: number;
+    correctionReduction: number;
+    firstApproachImprovement: number;
+    silenceImprovement: number;
+    blindSpotReduction: number;
+  };
+  outcomeQuality: { successRate: number; revertRate: number; userApprovalRate: number };
+  healthChecks: { metricCoherence: number; suspectedGaming: string[] };
+  assessment: "improving" | "stable" | "degrading" | "suspicious";
+};
+
+export type GodelBoundary = {
+  classification: "self-verifiable" | "requires-external" | "undecidable";
+  rationale: "consistency" | "alignment" | "termination" | "self-reference" | "none";
+  explanation: string;
+};
+
+// ============================================================================
 // OETAV Phase E — Reflexion Buffer Types (M5)
 // ============================================================================
 
