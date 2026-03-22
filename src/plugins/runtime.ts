@@ -23,6 +23,12 @@ const state: RegistryState = (() => {
 })();
 
 export function setActivePluginRegistry(registry: PluginRegistry, cacheKey?: string) {
+  // Carry forward httpRoutes from old registry so that routes registered by
+  // running channels (LINE, Telegram, etc.) survive registry replacement.
+  const oldRoutes = state.registry?.httpRoutes;
+  if (oldRoutes && oldRoutes.length > 0 && (!registry.httpRoutes || registry.httpRoutes.length === 0)) {
+    registry.httpRoutes = oldRoutes;
+  }
   state.registry = registry;
   state.key = cacheKey ?? null;
   state.version += 1;
