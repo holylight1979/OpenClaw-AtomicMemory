@@ -58,7 +58,22 @@ import {
   loadExecutedRecords,
 } from "./src/iteration-executor.js";
 import { snapshotMetrics, tickAndVerify } from "./src/outcome-tracker.js";
-import { critiqueProposal } from "./src/self-critique.js";
+import {
+  critiqueProposal,
+  generateReflectionText,
+  addReflection,
+  getReflectionContext,
+  loadReflectionBuffer,
+  saveReflectionBuffer,
+  formatReflectionSummary,
+} from "./src/self-critique.js";
+import {
+  CoreAtomRegistry,
+  checkIdentityDrift,
+  loadIdentityBaseline,
+  createIdentityBaseline,
+  formatIdentityDriftSummary,
+} from "./src/identity-checker.js";
 import type { TierDistribution, CategoryDistribution, MetricsSnapshot } from "./src/types.js";
 import { ACTION_DECISION_LEVEL } from "./src/types.js";
 import { buildEvolveGuardContext, canTriggerEvolution } from "./src/evolve-guard.js";
@@ -143,6 +158,8 @@ type PluginState = {
   runtimeAdminIds: string[];
   // System identity registry (loaded from System.Owner.json)
   systemIdentity: SystemIdentity | null;
+  // Phase E: Pending identity drift alert to inject in next session_start
+  pendingIdentityAlert: string | null;
   // Atoms touched this turn (for MEMORY.md scoring)
   turnTouchedAtoms: TouchedAtom[];
 };
@@ -466,6 +483,31 @@ function registerHooks(state: PluginState): void {
         if (state.pendingIterationReminder) {
           wisdomInject += `\n${state.pendingIterationReminder}`;
           state.pendingIterationReminder = null;
+        }
+
+        // ── Phase E: Inject pending identity alert (once per session) ──
+        if (state.pendingIdentityAlert) {
+          wisdomInject += `\n${state.pendingIdentityAlert}`;
+          state.pendingIdentityAlert = null;
+        }
+
+        // ── Phase E: Inject reflection context (if enabled) ──
+        if (cfg.selfIteration.autonomousIteration.reflection.enabled) {
+          try {
+            const reflBuf = await loadReflectionBuffer(
+              cfg.atomStorePath,
+              cfg.selfIteration.autonomousIteration.reflection.maxBufferSize,
+            );
+            const reflCtx = getReflectionContext(
+              reflBuf,
+              cfg.selfIteration.autonomousIteration.reflection.maxContextTokens,
+            );
+            if (reflCtx) {
+              wisdomInject += `\n${reflCtx}`;
+            }
+          } catch {
+            // non-critical — skip silently
+          }
         }
 
         if (cfg.wisdom.enabled) {
@@ -1053,22 +1095,87 @@ function registerHooks(state: PluginState): void {
               }
 
               // 6. Tick outcome verification (increment counters + verify mature records)
+              let verifiedOutcomes: import("./src/types.js").OutcomeResult[] = [];
               try {
                 const baselineSnapshot = await snapshotMetrics(store, sessionKey);
-                const outcomes = await tickAndVerify(
+                verifiedOutcomes = await tickAndVerify(
                   atomStorePath,
                   store,
                   sessionKey,
                   undefined,
                   iterationLog,
                 );
-                if (outcomes.length > 0) {
+                if (verifiedOutcomes.length > 0) {
                   iterationLog.info(
-                    `Phase D outcomes: ${outcomes.map((o) => `${o.proposalId.slice(0, 8)}→${o.verdict}`).join(", ")}`,
+                    `Phase D outcomes: ${verifiedOutcomes.map((o) => `${o.proposalId.slice(0, 8)}→${o.verdict}`).join(", ")}`,
                   );
                 }
               } catch (err) {
                 iterationLog.warn(`Phase D tickAndVerify failed: ${err instanceof Error ? err.message : String(err)}`);
+              }
+
+              // 7. Phase E: Reflexion Buffer — generate reflections from verified outcomes
+              if (autoCfg.reflection.enabled && verifiedOutcomes.length > 0) {
+                try {
+                  const executedRecords = await loadExecutedRecords(atomStorePath);
+                  let reflBuf = await loadReflectionBuffer(atomStorePath, autoCfg.reflection.maxBufferSize);
+
+                  for (const outcome of verifiedOutcomes) {
+                    const record = executedRecords.find((r) => r.proposal.id === outcome.proposalId);
+                    if (!record) continue;
+                    const reflection = generateReflectionText(outcome, record.proposal);
+                    reflBuf = addReflection(reflBuf, reflection);
+                  }
+
+                  await saveReflectionBuffer(atomStorePath, reflBuf);
+                  iterationLog.info(`Phase E: ${verifiedOutcomes.length} reflection(s) added (total=${reflBuf.entries.length})`);
+                } catch (err) {
+                  iterationLog.warn(`Phase E reflection failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
+              }
+
+              // 8. Phase E: Identity Drift Check (every N sessions)
+              if (autoCfg.identity.enabled) {
+                try {
+                  const baseline = await loadIdentityBaseline(atomStorePath);
+                  if (baseline) {
+                    // Simple session counter: check if totalEpisodics is divisible by checkInterval
+                    const shouldCheck = iterState.totalEpisodics > 0 &&
+                      iterState.totalEpisodics % autoCfg.identity.checkIntervalSessions === 0;
+                    if (shouldCheck) {
+                      const registry = new CoreAtomRegistry(autoCfg.identity.essentialAtomRefs);
+                      // Build current atom snapshots
+                      const { createHash } = await import("node:crypto");
+                      const currentAtoms: import("./src/types.js").AtomSnapshot[] = [];
+                      try {
+                        const allAtoms = await store.list();
+                        for (const atom of allAtoms) {
+                          const content = atom.knowledge + atom.actions;
+                          currentAtoms.push({
+                            ref: `${atom.category}/${atom.id}`,
+                            contentHash: createHash("sha256").update(content, "utf-8").digest("hex"),
+                            confidence: atom.confidence,
+                            triggers: atom.triggers,
+                            lastModified: atom.lastUsed,
+                          });
+                        }
+                      } catch { /* empty store is ok */ }
+
+                      const driftReport = checkIdentityDrift(currentAtoms, baseline, registry);
+                      if (driftReport.severity === "critical" || driftReport.severity === "significant") {
+                        state.pendingIdentityAlert =
+                          `[Identity Drift Alert — ${driftReport.severity.toUpperCase()}]\n` +
+                          driftReport.evolutionNarrative;
+                        iterationLog.warn(`Phase E identity drift: ${driftReport.severity} — ${driftReport.evolutionNarrative}`);
+                      } else {
+                        iterationLog.info(`Phase E identity check: ${driftReport.severity}`);
+                      }
+                    }
+                  }
+                  // Fail-safe: no baseline → silently skip
+                } catch (err) {
+                  iterationLog.warn(`Phase E identity check failed: ${err instanceof Error ? err.message : String(err)}`);
+                }
               }
             } catch (err) {
               iterationLog.warn(`Phase B evaluation failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -2355,6 +2462,52 @@ function registerCommands(state: PluginState): void {
         // Maturity phase
         const iterState = await loadIterationState(atomStorePath);
 
+        // Phase E: Identity Drift summary
+        let identityDriftSummary: string;
+        try {
+          const baseline = await loadIdentityBaseline(atomStorePath);
+          if (baseline) {
+            const registry = new CoreAtomRegistry(
+              cfg.selfIteration.autonomousIteration.identity.essentialAtomRefs,
+            );
+            const { createHash } = await import("node:crypto");
+            const currentAtoms: import("./src/types.js").AtomSnapshot[] = [];
+            try {
+              const { AtomStore: AS } = await import("./src/atom-store.js");
+              const tempStore = new AS(atomStorePath);
+              const allAtoms = await tempStore.list();
+              for (const atom of allAtoms) {
+                const content = atom.knowledge + atom.actions;
+                currentAtoms.push({
+                  ref: `${atom.category}/${atom.id}`,
+                  contentHash: createHash("sha256").update(content, "utf-8").digest("hex"),
+                  confidence: atom.confidence,
+                  triggers: atom.triggers,
+                  lastModified: atom.lastUsed,
+                });
+              }
+            } catch { /* empty */ }
+            const driftReport = checkIdentityDrift(currentAtoms, baseline, registry);
+            identityDriftSummary = formatIdentityDriftSummary(driftReport);
+          } else {
+            identityDriftSummary = formatIdentityDriftSummary(null);
+          }
+        } catch {
+          identityDriftSummary = "  Error loading identity data.";
+        }
+
+        // Phase E: Reflection Buffer summary
+        let reflectionSummary: string;
+        try {
+          const reflBuf = await loadReflectionBuffer(
+            atomStorePath,
+            cfg.selfIteration.autonomousIteration.reflection.maxBufferSize,
+          );
+          reflectionSummary = formatReflectionSummary(reflBuf);
+        } catch {
+          reflectionSummary = "  Error loading reflection data.";
+        }
+
         return {
           text: [
             "## OETAV Self-Iteration Status",
@@ -2378,6 +2531,12 @@ function registerCommands(state: PluginState): void {
             "",
             `### 知行合一 (Unity: ${zhixing.unityScore.toFixed(2)})`,
             zhixingLines,
+            "",
+            `### Identity Drift`,
+            identityDriftSummary,
+            "",
+            `### Reflection Buffer`,
+            reflectionSummary,
           ].join("\n"),
         };
       }
@@ -2921,6 +3080,7 @@ const atomicMemoryPlugin = {
       api,
       pendingReflectionSummary: null,
       pendingIterationReminder: null,
+      pendingIdentityAlert: null,
       pendingForget: null,
       testSession: {
         active: false,

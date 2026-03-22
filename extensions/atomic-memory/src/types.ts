@@ -731,6 +731,70 @@ export type HealthHistoryStore = {
 };
 
 // ============================================================================
+// OETAV Phase E — Identity Checker Types (M3)
+// ============================================================================
+
+export type AtomSnapshot = {
+  ref: string;              // "category/id"
+  contentHash: string;      // SHA-256
+  confidence: Confidence;
+  triggers: string[];
+  lastModified: string;
+};
+
+export type RuleSnapshot = {
+  name: string;
+  contentHash: string;
+  source: string;
+};
+
+export type IdentitySnapshot = {
+  timestamp: string;
+  coreAtoms: AtomSnapshot[];
+  rules: RuleSnapshot[];
+  thresholds: Record<string, number>;
+  fingerprint: string;       // hash of entire snapshot
+};
+
+export type DriftSeverity = "none" | "minor" | "significant" | "critical";
+
+export type DriftItem = {
+  type: "atom-modified" | "atom-removed" | "atom-added"
+      | "rule-modified" | "rule-removed" | "threshold-changed";
+  ref: string;
+  propertyType: "essential" | "constitutional" | "accidental";
+  detail: string;
+};
+
+export type DriftReport = {
+  severity: DriftSeverity;
+  essentialDrifts: DriftItem[];
+  constitutionalDrifts: DriftItem[];
+  accidentalDrifts: DriftItem[];
+  coreChangeRatio: number;
+  evolutionNarrative: string;
+};
+
+// ============================================================================
+// OETAV Phase E — Reflexion Buffer Types (M5)
+// ============================================================================
+
+export type ReflectionText = {
+  text: string;
+  whatWorked: string[];
+  whatFailed: string[];
+  whatToTryNext: string[];
+  timestamp: string;
+  proposalDescription: string;
+  outcomeSuccess: boolean;
+};
+
+export type ReflectionBuffer = {
+  entries: ReflectionText[];
+  maxEntries: number;
+};
+
+// ============================================================================
 // OETAV Phase C — Execution / Outcome / Self-Critique Types
 // ============================================================================
 

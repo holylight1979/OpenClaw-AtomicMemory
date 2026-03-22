@@ -110,6 +110,7 @@ function makeConfig(overrides?: Partial<AtomicMemoryConfig>): AtomicMemoryConfig
         selfCritique: { enabled: false, passThreshold: 0.6, safetyVetoThreshold: 0.5 },
         devilsAdvocate: { enabled: true, overSpeculationThreshold: 0.7 },
         reflection: { enabled: false, maxBufferSize: 10, maxContextTokens: 200 },
+        identity: { enabled: false, checkIntervalSessions: 10, essentialAtomRefs: [] },
       },
     },
     permission: {

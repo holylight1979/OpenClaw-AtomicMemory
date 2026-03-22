@@ -16,8 +16,13 @@ import type {
   DevilsAdvocateChallenge,
   CritiqueResult,
   CritiqueScore,
+  OutcomeResult,
+  ReflectionText,
+  ReflectionBuffer,
 } from "./types.js";
 import type { OllamaClient } from "./ollama-client.js";
+import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { createLogger } from "./logger.js";
 
 // ============================================================================
@@ -322,4 +327,158 @@ function buildBlockResult(reasoning: string): CritiqueResult {
     suggestions: [],
     reasoning,
   };
+}
+
+// ============================================================================
+// Reflexion Buffer (Phase E — Spec M5)
+// ============================================================================
+
+const ITERATION_DIR = "_iteration";
+const REFLECTION_FILE = "reflection-buffer.json";
+const DEFAULT_MAX_ENTRIES = 10;
+const DEFAULT_MAX_CONTEXT_TOKENS = 200;
+const CHARS_PER_TOKEN = 3; // CJK average
+
+/**
+ * Deterministic reflection text generation from outcome + proposal.
+ * No LLM required.
+ */
+export function generateReflectionText(
+  outcome: OutcomeResult,
+  proposal: IterationProposal,
+): ReflectionText {
+  const whatWorked: string[] = [];
+  const whatFailed: string[] = [];
+  const whatToTryNext: string[] = [];
+
+  if (outcome.verdict === "improved") {
+    whatWorked.push(`Action "${proposal.action.type}" improved target metrics.`);
+    for (const d of outcome.drivers) {
+      if (d.changePercent > 0) {
+        whatWorked.push(`${d.metric}: ${d.baselineValue.toFixed(2)} → ${d.currentValue.toFixed(2)} (+${d.changePercent.toFixed(1)}%)`);
+      }
+    }
+    whatToTryNext.push("Continue monitoring for sustained improvement.");
+  } else if (outcome.verdict === "degraded") {
+    whatFailed.push(`Action "${proposal.action.type}" degraded target metrics.`);
+    for (const d of outcome.drivers) {
+      if (d.changePercent < 0) {
+        whatFailed.push(`${d.metric}: ${d.baselineValue.toFixed(2)} → ${d.currentValue.toFixed(2)} (${d.changePercent.toFixed(1)}%)`);
+      }
+    }
+    whatToTryNext.push("Consider reverting or adjusting the action parameters.");
+    whatToTryNext.push("Gather more evidence before retrying similar actions.");
+  } else {
+    // neutral
+    whatWorked.push("No negative impact detected.");
+    whatFailed.push("No measurable improvement either.");
+    whatToTryNext.push("May need more sessions to observe effect, or try a different approach.");
+  }
+
+  const text = [
+    `Proposal: ${proposal.summary}`,
+    `Action: ${proposal.action.type} — ${proposal.action.description}`,
+    `Outcome: ${outcome.verdict} (after ${outcome.sessionsElapsed} sessions)`,
+    whatWorked.length > 0 ? `Worked: ${whatWorked.join("; ")}` : "",
+    whatFailed.length > 0 ? `Failed: ${whatFailed.join("; ")}` : "",
+    whatToTryNext.length > 0 ? `Next: ${whatToTryNext.join("; ")}` : "",
+  ].filter(Boolean).join("\n");
+
+  return {
+    text,
+    whatWorked,
+    whatFailed,
+    whatToTryNext,
+    timestamp: new Date().toISOString(),
+    proposalDescription: proposal.action.description,
+    outcomeSuccess: outcome.verdict === "improved",
+  };
+}
+
+/**
+ * Sliding window buffer management — add reflection, evict oldest if over limit.
+ */
+export function addReflection(buffer: ReflectionBuffer, reflection: ReflectionText): ReflectionBuffer {
+  const entries = [...buffer.entries, reflection];
+  // Evict oldest entries if over limit
+  while (entries.length > buffer.maxEntries) {
+    entries.shift();
+  }
+  return { entries, maxEntries: buffer.maxEntries };
+}
+
+/**
+ * Get reflection context for injection (failure-prioritized, token-budgeted).
+ */
+export function getReflectionContext(buffer: ReflectionBuffer, maxTokenBudget?: number): string {
+  if (buffer.entries.length === 0) return "";
+
+  const budget = maxTokenBudget ?? DEFAULT_MAX_CONTEXT_TOKENS;
+  const maxChars = budget * CHARS_PER_TOKEN;
+
+  // Sort: failures first (most recent first within each group)
+  const sorted = [...buffer.entries].sort((a, b) => {
+    if (a.outcomeSuccess !== b.outcomeSuccess) {
+      return a.outcomeSuccess ? 1 : -1; // failures first
+    }
+    return b.timestamp.localeCompare(a.timestamp); // recent first
+  });
+
+  const lines: string[] = ["[Reflexion Context]"];
+  let charCount = lines[0].length;
+
+  for (const entry of sorted) {
+    const line = entry.outcomeSuccess
+      ? `✓ ${entry.proposalDescription}: ${entry.whatWorked[0] ?? "improved"}`
+      : `✗ ${entry.proposalDescription}: ${entry.whatFailed[0] ?? "degraded"} → ${entry.whatToTryNext[0] ?? "reconsider"}`;
+
+    if (charCount + line.length + 1 > maxChars) break;
+    lines.push(line);
+    charCount += line.length + 1;
+  }
+
+  return lines.length > 1 ? lines.join("\n") : "";
+}
+
+// ============================================================================
+// Reflexion Persistence
+// ============================================================================
+
+export async function loadReflectionBuffer(atomStorePath: string, maxEntries?: number): Promise<ReflectionBuffer> {
+  const filePath = join(atomStorePath, ITERATION_DIR, REFLECTION_FILE);
+  try {
+    const raw = await readFile(filePath, "utf-8");
+    const data = JSON.parse(raw) as ReflectionBuffer;
+    return {
+      entries: Array.isArray(data.entries) ? data.entries : [],
+      maxEntries: data.maxEntries ?? maxEntries ?? DEFAULT_MAX_ENTRIES,
+    };
+  } catch {
+    return { entries: [], maxEntries: maxEntries ?? DEFAULT_MAX_ENTRIES };
+  }
+}
+
+export async function saveReflectionBuffer(atomStorePath: string, buffer: ReflectionBuffer): Promise<void> {
+  const dir = join(atomStorePath, ITERATION_DIR);
+  await mkdir(dir, { recursive: true });
+  await writeFile(join(dir, REFLECTION_FILE), JSON.stringify(buffer, null, 2), "utf-8");
+}
+
+/**
+ * Format reflection buffer summary for /iterate status display.
+ */
+export function formatReflectionSummary(buffer: ReflectionBuffer): string {
+  if (buffer.entries.length === 0) return "  Empty (no reflections yet).";
+  const successes = buffer.entries.filter((e) => e.outcomeSuccess).length;
+  const failures = buffer.entries.length - successes;
+  const lines = [
+    `  Entries: ${buffer.entries.length}/${buffer.maxEntries} (${successes} success, ${failures} failure)`,
+  ];
+  // Show latest 3
+  const recent = buffer.entries.slice(-3).reverse();
+  for (const entry of recent) {
+    const icon = entry.outcomeSuccess ? "✓" : "✗";
+    lines.push(`  ${icon} ${entry.proposalDescription.slice(0, 60)} (${entry.timestamp.slice(0, 10)})`);
+  }
+  return lines.join("\n");
 }

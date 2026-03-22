@@ -192,6 +192,15 @@ export type AtomicMemoryConfig = {
         /** Max tokens to inject from reflection context. Default 200. */
         maxContextTokens: number;
       };
+      /** Phase E: Identity drift checker config. */
+      identity: {
+        /** Enable identity drift checking. Default true. */
+        enabled: boolean;
+        /** Sessions between identity checks. Default 10. */
+        checkIntervalSessions: number;
+        /** Additional atom refs to mark as essential. */
+        essentialAtomRefs: string[];
+      };
     };
   };
   permission: {
@@ -314,7 +323,7 @@ export const atomicMemoryConfigSchema = {
 
     // selfIteration.autonomousIteration sub-config
     const autoIterRaw = (selfIterationRaw.autonomousIteration ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(autoIterRaw, ["enabled", "evidenceDecayRate", "entropy", "orderParameter", "flowBalance", "observerOverhead", "staleEvidence", "thresholdBalancer", "wuWei", "convergence", "healthScore", "selfCritique", "devilsAdvocate", "reflection"], "selfIteration.autonomousIteration config");
+    assertAllowedKeys(autoIterRaw, ["enabled", "evidenceDecayRate", "entropy", "orderParameter", "flowBalance", "observerOverhead", "staleEvidence", "thresholdBalancer", "wuWei", "convergence", "healthScore", "selfCritique", "devilsAdvocate", "reflection", "identity"], "selfIteration.autonomousIteration config");
 
     const entropyRaw = (autoIterRaw.entropy ?? {}) as Record<string, unknown>;
     assertAllowedKeys(entropyRaw, ["enabled", "rigidThreshold", "chaoticThreshold", "tierWeight"], "autonomousIteration.entropy config");
@@ -351,6 +360,9 @@ export const atomicMemoryConfigSchema = {
 
     const reflectionRaw = (autoIterRaw.reflection ?? {}) as Record<string, unknown>;
     assertAllowedKeys(reflectionRaw, ["enabled", "maxBufferSize", "maxContextTokens"], "autonomousIteration.reflection config");
+
+    const identityRaw = (autoIterRaw.identity ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(identityRaw, ["enabled", "checkIntervalSessions", "essentialAtomRefs"], "autonomousIteration.identity config");
 
     // permission sub-config
     const permissionRaw = (cfg.permission ?? {}) as Record<string, unknown>;
@@ -486,6 +498,13 @@ export const atomicMemoryConfigSchema = {
             enabled: boolOrDefault(reflectionRaw.enabled, false),
             maxBufferSize: numOrDefault(reflectionRaw.maxBufferSize, 10, 1, 50),
             maxContextTokens: numOrDefault(reflectionRaw.maxContextTokens, 200, 50, 1000),
+          },
+          identity: {
+            enabled: boolOrDefault(identityRaw.enabled, true),
+            checkIntervalSessions: numOrDefault(identityRaw.checkIntervalSessions, 10, 1, 100),
+            essentialAtomRefs: Array.isArray(identityRaw.essentialAtomRefs)
+              ? (identityRaw.essentialAtomRefs as unknown[]).filter((v): v is string => typeof v === "string")
+              : [],
           },
         },
       },
