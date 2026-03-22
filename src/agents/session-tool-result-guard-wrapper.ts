@@ -84,6 +84,7 @@ export function guardSessionManager(
     : undefined;
 
   const guard = installSessionToolResultGuard(sessionManager, {
+    sessionKey: opts?.sessionKey,
     transformMessageForPersistence: (message) =>
       applyInputProvenanceToUserMessage(message, opts?.inputProvenance),
     transformToolResultForPersistence: transform,
