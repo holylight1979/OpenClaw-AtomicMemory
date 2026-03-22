@@ -139,6 +139,34 @@ export type AtomicMemoryConfig = {
         decayRate: number;
         archiveThreshold: number;
       };
+      /** Phase B: Threshold balancer config. */
+      thresholdBalancer: {
+        enabled: boolean;
+        /** Minimum data points before adjusting. Default 3. */
+        inertiaThreshold: number;
+        /** Max adjustment ratio (±). Default 0.15 (15%). */
+        maxAdjustmentRatio: number;
+      };
+      /** Phase B: Wu-Wei maturity-aware intervention bias. */
+      wuWei: {
+        enabled: boolean;
+      };
+      /** Phase B: Convergence analysis config. */
+      convergence: {
+        /** Absolute difference threshold. Default 0.01. */
+        epsilon: number;
+        /** Minimum data points required. Default 4. */
+        minWindow: number;
+        /** Contraction ratio threshold. Default 0.95. */
+        ratioThreshold: number;
+      };
+      /** Phase B: Health score stability config. */
+      healthScore: {
+        /** Consecutive degradations before alert. Default 3. */
+        maxDegradations: number;
+        /** Analysis window size. Default 5. */
+        windowSize: number;
+      };
     };
   };
   permission: {
@@ -261,7 +289,7 @@ export const atomicMemoryConfigSchema = {
 
     // selfIteration.autonomousIteration sub-config
     const autoIterRaw = (selfIterationRaw.autonomousIteration ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(autoIterRaw, ["enabled", "evidenceDecayRate", "entropy", "orderParameter", "flowBalance", "observerOverhead", "staleEvidence"], "selfIteration.autonomousIteration config");
+    assertAllowedKeys(autoIterRaw, ["enabled", "evidenceDecayRate", "entropy", "orderParameter", "flowBalance", "observerOverhead", "staleEvidence", "thresholdBalancer", "wuWei", "convergence", "healthScore"], "selfIteration.autonomousIteration config");
 
     const entropyRaw = (autoIterRaw.entropy ?? {}) as Record<string, unknown>;
     assertAllowedKeys(entropyRaw, ["enabled", "rigidThreshold", "chaoticThreshold", "tierWeight"], "autonomousIteration.entropy config");
@@ -277,6 +305,18 @@ export const atomicMemoryConfigSchema = {
 
     const staleEvidenceRaw = (autoIterRaw.staleEvidence ?? {}) as Record<string, unknown>;
     assertAllowedKeys(staleEvidenceRaw, ["gracePeriodCycles", "decayRate", "archiveThreshold"], "autonomousIteration.staleEvidence config");
+
+    const thresholdBalancerRaw = (autoIterRaw.thresholdBalancer ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(thresholdBalancerRaw, ["enabled", "inertiaThreshold", "maxAdjustmentRatio"], "autonomousIteration.thresholdBalancer config");
+
+    const wuWeiRaw = (autoIterRaw.wuWei ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(wuWeiRaw, ["enabled"], "autonomousIteration.wuWei config");
+
+    const convergenceRaw = (autoIterRaw.convergence ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(convergenceRaw, ["epsilon", "minWindow", "ratioThreshold"], "autonomousIteration.convergence config");
+
+    const healthScoreRaw = (autoIterRaw.healthScore ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(healthScoreRaw, ["maxDegradations", "windowSize"], "autonomousIteration.healthScore config");
 
     // permission sub-config
     const permissionRaw = (cfg.permission ?? {}) as Record<string, unknown>;
@@ -381,6 +421,23 @@ export const atomicMemoryConfigSchema = {
             gracePeriodCycles: numOrDefault(staleEvidenceRaw.gracePeriodCycles, 3, 1, 20),
             decayRate: numOrDefault(staleEvidenceRaw.decayRate, 0.2, 0, 1),
             archiveThreshold: numOrDefault(staleEvidenceRaw.archiveThreshold, 0.3, 0, 1),
+          },
+          thresholdBalancer: {
+            enabled: boolOrDefault(thresholdBalancerRaw.enabled, true),
+            inertiaThreshold: numOrDefault(thresholdBalancerRaw.inertiaThreshold, 3, 1, 20),
+            maxAdjustmentRatio: numOrDefault(thresholdBalancerRaw.maxAdjustmentRatio, 0.15, 0, 1),
+          },
+          wuWei: {
+            enabled: boolOrDefault(wuWeiRaw.enabled, true),
+          },
+          convergence: {
+            epsilon: numOrDefault(convergenceRaw.epsilon, 0.01, 0.001, 1),
+            minWindow: numOrDefault(convergenceRaw.minWindow, 4, 2, 20),
+            ratioThreshold: numOrDefault(convergenceRaw.ratioThreshold, 0.95, 0.5, 1),
+          },
+          healthScore: {
+            maxDegradations: numOrDefault(healthScoreRaw.maxDegradations, 3, 1, 20),
+            windowSize: numOrDefault(healthScoreRaw.windowSize, 5, 2, 50),
           },
         },
       },

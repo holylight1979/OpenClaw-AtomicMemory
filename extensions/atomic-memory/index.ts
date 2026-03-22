@@ -45,8 +45,11 @@ import {
   saveIterationState,
 } from "./src/self-iteration.js";
 import { collectAll as collectSignals } from "./src/signal-collector.js";
-import { updateEvidence, decayEvidence } from "./src/evidence-accumulator.js";
-import type { TierDistribution, CategoryDistribution } from "./src/types.js";
+import { updateEvidence, decayEvidence, getAllEvidence } from "./src/evidence-accumulator.js";
+import { recordHealthScore, formatHealthSummary } from "./src/convergence-health.js";
+import { evaluateThresholds, formatThresholdSummary } from "./src/threshold-balancer.js";
+import { generateProposals, formatProposalsSummary } from "./src/iteration-planner.js";
+import type { TierDistribution, CategoryDistribution, MetricsSnapshot } from "./src/types.js";
 import { buildEvolveGuardContext, canTriggerEvolution } from "./src/evolve-guard.js";
 import {
   selfAnalyze,
@@ -888,6 +891,78 @@ function registerHooks(state: PluginState): void {
               autoCfg.evidenceDecayRate,
               iterationLog,
             );
+
+            // Phase B: Convergence Health + Threshold Evaluation + Proposal Generation
+            try {
+              // 1. Build MetricsSnapshot for health scoring
+              const metricsSnapshot: MetricsSnapshot = {
+                sessionKey,
+                timestamp: new Date().toISOString(),
+                totalAtoms: 0,
+                tierCounts: { fixed: 0, observed: 0, temporary: 0 },
+                categoryCounts: {},
+              };
+              try {
+                const allAtoms = await store.list();
+                metricsSnapshot.totalAtoms = allAtoms.length;
+                for (const atom of allAtoms) {
+                  const tierKey = atom.confidence.replace("[", "").replace("]", "");
+                  if (tierKey === "固") metricsSnapshot.tierCounts.fixed++;
+                  else if (tierKey === "觀") metricsSnapshot.tierCounts.observed++;
+                  else metricsSnapshot.tierCounts.temporary++;
+                  metricsSnapshot.categoryCounts[atom.category] =
+                    (metricsSnapshot.categoryCounts[atom.category] ?? 0) + 1;
+                }
+                // Add optional metrics if available
+                if (decayResults.length > 0) {
+                  const staleCount = decayResults.filter(
+                    (d) => d.action === "archived" || d.action === "flagged",
+                  ).length;
+                  metricsSnapshot.staleAtomRate = metricsSnapshot.totalAtoms > 0
+                    ? staleCount / metricsSnapshot.totalAtoms : 0;
+                }
+                metricsSnapshot.oscillatingCount = report.oscillatingAtoms.length;
+                if (wisdomMetrics) {
+                  metricsSnapshot.wisdomBlindSpots = wisdomMetrics.blindSpots.length;
+                }
+              } catch (e) {
+                iterationLog.warn(`metrics snapshot build failed: ${e instanceof Error ? e.message : String(e)}`);
+              }
+
+              // 2. Convergence health calculation + history storage
+              const { stability, convergence } = await recordHealthScore(
+                atomStorePath,
+                metricsSnapshot,
+                sessionKey,
+                iterationLog,
+              );
+
+              // 3. Threshold evaluation (Goodman balance)
+              const evidence = await getAllEvidence(atomStorePath);
+              const { store: thresholdStore, zhixing } = await evaluateThresholds(
+                atomStorePath,
+                evidence,
+                phase,
+                iterationLog,
+              );
+
+              // 4. Proposal generation (pending only, no execution)
+              const proposals = await generateProposals(
+                atomStorePath,
+                evidence,
+                thresholdStore,
+                phase,
+                metricsSnapshot,
+                undefined,
+                iterationLog,
+              );
+
+              if (proposals.length > 0) {
+                iterationLog.info(`Phase B: ${proposals.length} proposals generated (pending)`);
+              }
+            } catch (err) {
+              iterationLog.warn(`Phase B evaluation failed: ${err instanceof Error ? err.message : String(err)}`);
+            }
           } catch (err) {
             iterationLog.warn(`Phase A signal collection failed: ${err instanceof Error ? err.message : String(err)}`);
           }
@@ -2121,7 +2196,7 @@ function registerCommands(state: PluginState): void {
 
   api.registerCommand({
     name: "iterate",
-    description: "自我迭代 — /iterate [analyze <path>|propose <desc>|apply|journal]",
+    description: "自我迭代 — /iterate [status|analyze <path>|propose <desc>|apply|journal]",
     acceptsArgs: true,
     handler: async (ctx) => {
       const codeModCfg = cfg.selfIteration.codeModification;
@@ -2134,14 +2209,68 @@ function registerCommands(state: PluginState): void {
         return { text: "⛔ /iterate requires owner permission." };
       }
 
-      if (!codeModCfg.enabled) {
-        return { text: "⛔ Self-evolution is disabled. Set selfIteration.codeModification.enabled = true in config." };
-      }
-
       const args = ctx.args?.trim() ?? "";
       const spaceIdx = args.indexOf(" ");
       const subCmd = spaceIdx > 0 ? args.slice(0, spaceIdx) : args;
       const subArgs = spaceIdx > 0 ? args.slice(spaceIdx + 1).trim() : "";
+
+      // ── /iterate status — OETAV observation dashboard (no codeModification required) ──
+      if (subCmd === "status") {
+        const atomStorePath = cfg.atomStorePath;
+        const { formatEvidenceSummary } = await import("./src/evidence-accumulator.js");
+
+        const [evidenceSummary, healthSummary, thresholdSummary, proposalsSummary] = await Promise.all([
+          formatEvidenceSummary(atomStorePath),
+          formatHealthSummary(atomStorePath),
+          formatThresholdSummary(atomStorePath),
+          formatProposalsSummary(atomStorePath),
+        ]);
+
+        // Zhixing report
+        const evidence = await getAllEvidence(atomStorePath);
+        const { checkZhixingUnity } = await import("./src/threshold-balancer.js");
+        const zhixing = checkZhixingUnity(evidence, {
+          gracePeriodCycles: cfg.selfIteration.autonomousIteration.staleEvidence.gracePeriodCycles,
+          decayRate: cfg.selfIteration.autonomousIteration.staleEvidence.decayRate,
+          archiveThreshold: cfg.selfIteration.autonomousIteration.staleEvidence.archiveThreshold,
+        });
+        const zhixingLines = zhixing.separations.length > 0
+          ? zhixing.separations.map((s) =>
+              `  ${s.signalType}: score=${s.evidenceScore.toFixed(2)}, stale=${s.cyclesStale}, ` +
+              `urgency=${s.urgency.toFixed(2)} → ${s.recommendation}`,
+            ).join("\n")
+          : "  No separations";
+
+        // Maturity phase
+        const iterState = await loadIterationState(atomStorePath);
+
+        return {
+          text: [
+            "## OETAV Self-Iteration Status",
+            "",
+            `**Maturity Phase**: ${iterState.maturityPhase} (${iterState.totalEpisodics} episodics)`,
+            "",
+            `### Health`,
+            healthSummary,
+            "",
+            `### Evidence`,
+            evidenceSummary,
+            "",
+            `### Thresholds`,
+            thresholdSummary,
+            "",
+            `### Proposals`,
+            proposalsSummary,
+            "",
+            `### 知行合一 (Unity: ${zhixing.unityScore.toFixed(2)})`,
+            zhixingLines,
+          ].join("\n"),
+        };
+      }
+
+      if (!codeModCfg.enabled) {
+        return { text: "⛔ Self-evolution is disabled. Set selfIteration.codeModification.enabled = true in config." };
+      }
 
       // ── /iterate analyze <path> ──
       if (subCmd === "analyze") {
@@ -2272,6 +2401,7 @@ function registerCommands(state: PluginState): void {
         text: [
           "Usage: /iterate <subcommand>",
           "",
+          "  status            — OETAV observation dashboard (health, evidence, proposals)",
           "  analyze <path>    — Analyze source code at path",
           "  propose <desc>    — Prepare a modification proposal",
           "  apply [desc]      — Validate + build + commit current changes",

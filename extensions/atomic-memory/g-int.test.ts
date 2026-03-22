@@ -96,6 +96,18 @@ function makeConfig(overrides?: Partial<AtomicMemoryConfig>): AtomicMemoryConfig
         enabled: false, sourceDir: "", allowedPaths: [], blockedPaths: [],
         maxFilesPerPass: 10, maxLinesPerPass: 500, requireBuildPass: true, autoRevertOnFailure: true,
       },
+      autonomousIteration: {
+        enabled: false, evidenceDecayRate: 0.95,
+        entropy: { enabled: true, rigidThreshold: 0.3, chaoticThreshold: 0.85, tierWeight: 0.6 },
+        orderParameter: { rigidBound: 0.3, chaoticBound: 0.6 },
+        flowBalance: { enabled: true, steadyBand: 0.15 },
+        observerOverhead: { enabled: true, budgetMs: 5000 },
+        staleEvidence: { gracePeriodCycles: 3, decayRate: 0.2, archiveThreshold: 0.3 },
+        thresholdBalancer: { enabled: true, inertiaThreshold: 3, maxAdjustmentRatio: 0.15 },
+        wuWei: { enabled: true },
+        convergence: { epsilon: 0.01, minWindow: 4, ratioThreshold: 0.95 },
+        healthScore: { maxDegradations: 3, windowSize: 5 },
+      },
     },
     permission: {
       botName: "小助手",
