@@ -49,7 +49,18 @@ import { updateEvidence, decayEvidence, getAllEvidence } from "./src/evidence-ac
 import { recordHealthScore, formatHealthSummary } from "./src/convergence-health.js";
 import { evaluateThresholds, formatThresholdSummary } from "./src/threshold-balancer.js";
 import { generateProposals, formatProposalsSummary } from "./src/iteration-planner.js";
+import {
+  executeProposal,
+  approveProposal,
+  rejectProposal,
+  getPendingReminder,
+  formatExecutedSummary,
+  loadExecutedRecords,
+} from "./src/iteration-executor.js";
+import { snapshotMetrics, tickAndVerify } from "./src/outcome-tracker.js";
+import { critiqueProposal } from "./src/self-critique.js";
 import type { TierDistribution, CategoryDistribution, MetricsSnapshot } from "./src/types.js";
+import { ACTION_DECISION_LEVEL } from "./src/types.js";
 import { buildEvolveGuardContext, canTriggerEvolution } from "./src/evolve-guard.js";
 import {
   selfAnalyze,
@@ -112,6 +123,8 @@ type PluginState = {
   api: OpenClawPluginApi;
   // Wisdom: pending reflection summary to inject in next before_agent_start
   pendingReflectionSummary: string | null;
+  // OETAV: pending proposals reminder to inject in next before_agent_start
+  pendingIterationReminder: string | null;
   // Pending forget state — tracks forget candidates awaiting user confirmation
   pendingForget: {
     target: string;
@@ -188,6 +201,17 @@ function registerHooks(state: PluginState): void {
           iterState.totalEpisodics = totalEpisodics;
           iterState.maturityPhase = phase;
           await saveIterationState(atomStorePath, iterState);
+        }
+
+        // Phase D: Check for pending proposals → queue reminder for before_agent_start
+        try {
+          const reminder = await getPendingReminder(atomStorePath);
+          if (reminder) {
+            state.pendingIterationReminder = reminder;
+            iterationLog.info(`pending proposals reminder queued`);
+          }
+        } catch (err) {
+          iterationLog.warn(`pending reminder check failed: ${err instanceof Error ? err.message : String(err)}`);
         }
       } catch (err) {
         iterationLog.warn(`iteration check failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -437,6 +461,13 @@ function registerHooks(state: PluginState): void {
 
         // ── Wisdom: Situation classifier + reflection summary ─────────────
         let wisdomInject = "";
+
+        // ── OETAV: Inject pending proposals reminder (once per session) ──
+        if (state.pendingIterationReminder) {
+          wisdomInject += `\n${state.pendingIterationReminder}`;
+          state.pendingIterationReminder = null;
+        }
+
         if (cfg.wisdom.enabled) {
           // Inject queued reflection summary (once per session)
           if (state.pendingReflectionSummary) {
@@ -959,6 +990,85 @@ function registerHooks(state: PluginState): void {
 
               if (proposals.length > 0) {
                 iterationLog.info(`Phase B: ${proposals.length} proposals generated (pending)`);
+              }
+
+              // Phase D: Execute auto proposals + outcome verification
+              const autoCritiqueCfg = autoCfg.selfCritique;
+              const autoDAcfg = autoCfg.devilsAdvocate;
+
+              // 5. Execute auto-level proposals through gate chain
+              for (const proposal of proposals) {
+                const level = ACTION_DECISION_LEVEL[proposal.action.type] ?? "confirm";
+                if (level !== "auto") continue; // only auto proposals execute immediately
+
+                // LLM critique gate (if enabled)
+                if (autoCritiqueCfg.enabled) {
+                  try {
+                    const critiqueResult = await critiqueProposal(
+                      proposal,
+                      ollama,
+                      autoCritiqueCfg,
+                    );
+                    if (!critiqueResult.passed) {
+                      iterationLog.info(
+                        `Phase D critique blocked ${proposal.id.slice(0, 8)}: ` +
+                        `composite=${critiqueResult.compositeScore.toFixed(2)} — ${critiqueResult.issues[0] ?? ""}`,
+                      );
+                      continue; // skip execution
+                    }
+                  } catch (err) {
+                    // Fail-safe: critique error → block
+                    iterationLog.warn(
+                      `Phase D critique error for ${proposal.id.slice(0, 8)}: ` +
+                      `${err instanceof Error ? err.message : String(err)} — blocking`,
+                    );
+                    continue;
+                  }
+                }
+
+                // Execute through executor (includes devil's advocate gate)
+                try {
+                  const execResult = await executeProposal(
+                    proposal,
+                    store,
+                    atomStorePath,
+                    evidence,
+                    phase,
+                    sessionKey,
+                    metricsSnapshot,
+                    {
+                      devilsAdvocateEnabled: autoDAcfg.enabled,
+                      overSpeculationThreshold: autoDAcfg.overSpeculationThreshold,
+                    },
+                    iterationLog,
+                  );
+                  iterationLog.info(
+                    `Phase D exec ${proposal.id.slice(0, 8)}: ${execResult.action} — ${execResult.details?.slice(0, 80) ?? ""}`,
+                  );
+                } catch (err) {
+                  iterationLog.warn(
+                    `Phase D exec failed ${proposal.id.slice(0, 8)}: ${err instanceof Error ? err.message : String(err)}`,
+                  );
+                }
+              }
+
+              // 6. Tick outcome verification (increment counters + verify mature records)
+              try {
+                const baselineSnapshot = await snapshotMetrics(store, sessionKey);
+                const outcomes = await tickAndVerify(
+                  atomStorePath,
+                  store,
+                  sessionKey,
+                  undefined,
+                  iterationLog,
+                );
+                if (outcomes.length > 0) {
+                  iterationLog.info(
+                    `Phase D outcomes: ${outcomes.map((o) => `${o.proposalId.slice(0, 8)}→${o.verdict}`).join(", ")}`,
+                  );
+                }
+              } catch (err) {
+                iterationLog.warn(`Phase D tickAndVerify failed: ${err instanceof Error ? err.message : String(err)}`);
               }
             } catch (err) {
               iterationLog.warn(`Phase B evaluation failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -2196,7 +2306,7 @@ function registerCommands(state: PluginState): void {
 
   api.registerCommand({
     name: "iterate",
-    description: "自我迭代 — /iterate [status|analyze <path>|propose <desc>|apply|journal]",
+    description: "自我迭代 — /iterate [status|approve|reject|history|analyze|propose|apply|journal]",
     acceptsArgs: true,
     handler: async (ctx) => {
       const codeModCfg = cfg.selfIteration.codeModification;
@@ -2219,11 +2329,12 @@ function registerCommands(state: PluginState): void {
         const atomStorePath = cfg.atomStorePath;
         const { formatEvidenceSummary } = await import("./src/evidence-accumulator.js");
 
-        const [evidenceSummary, healthSummary, thresholdSummary, proposalsSummary] = await Promise.all([
+        const [evidenceSummary, healthSummary, thresholdSummary, proposalsSummary, executedSummary] = await Promise.all([
           formatEvidenceSummary(atomStorePath),
           formatHealthSummary(atomStorePath),
           formatThresholdSummary(atomStorePath),
           formatProposalsSummary(atomStorePath),
+          formatExecutedSummary(atomStorePath),
         ]);
 
         // Zhixing report
@@ -2262,10 +2373,56 @@ function registerCommands(state: PluginState): void {
             `### Proposals`,
             proposalsSummary,
             "",
+            `### Executed / Outcomes`,
+            executedSummary,
+            "",
             `### 知行合一 (Unity: ${zhixing.unityScore.toFixed(2)})`,
             zhixingLines,
           ].join("\n"),
         };
+      }
+
+      // ── /iterate approve <id> — approve a pending proposal ──
+      if (subCmd === "approve") {
+        if (!subArgs) return { text: "Usage: /iterate approve <proposal-id>" };
+        const atomStorePath = cfg.atomStorePath;
+        const cmdSessionKey = `${ctx.channel}-${ctx.senderId ?? "owner"}-cmd`;
+        const baselineSnapshot = await snapshotMetrics(store, cmdSessionKey);
+        const result = await approveProposal(
+          subArgs.trim(),
+          store,
+          atomStorePath,
+          cmdSessionKey,
+          baselineSnapshot,
+          log,
+        );
+        return {
+          text: result.error
+            ? `❌ ${result.error}`
+            : `✓ Approved: ${result.details?.slice(0, 120) ?? result.proposalId}`,
+        };
+      }
+
+      // ── /iterate reject <id> [reason] — reject a pending proposal ──
+      if (subCmd === "reject") {
+        if (!subArgs) return { text: "Usage: /iterate reject <id> [reason]" };
+        const parts = subArgs.trim().split(/\s+/);
+        const proposalId = parts[0];
+        const reason = parts.slice(1).join(" ") || "Rejected by owner.";
+        const atomStorePath = cfg.atomStorePath;
+        const result = await rejectProposal(proposalId, atomStorePath, reason, log);
+        return {
+          text: result.error
+            ? `❌ ${result.error}`
+            : `✓ Rejected: ${proposalId} — ${reason}`,
+        };
+      }
+
+      // ── /iterate history — show executed proposals + outcomes ──
+      if (subCmd === "history") {
+        const atomStorePath = cfg.atomStorePath;
+        const summary = await formatExecutedSummary(atomStorePath);
+        return { text: `## OETAV Execution History\n\n${summary}` };
       }
 
       if (!codeModCfg.enabled) {
@@ -2401,11 +2558,14 @@ function registerCommands(state: PluginState): void {
         text: [
           "Usage: /iterate <subcommand>",
           "",
-          "  status            — OETAV observation dashboard (health, evidence, proposals)",
-          "  analyze <path>    — Analyze source code at path",
-          "  propose <desc>    — Prepare a modification proposal",
-          "  apply [desc]      — Validate + build + commit current changes",
-          "  journal <summary> — Record an iteration note to memory",
+          "  status              — OETAV observation dashboard (health, evidence, proposals, outcomes)",
+          "  approve <id>        — Approve a pending proposal for execution",
+          "  reject <id> [reason]— Reject a pending proposal",
+          "  history             — Show executed proposals + outcome verifications",
+          "  analyze <path>      — Analyze source code at path",
+          "  propose <desc>      — Prepare a modification proposal",
+          "  apply [desc]        — Validate + build + commit current changes",
+          "  journal <summary>   — Record an iteration note to memory",
         ].join("\n"),
       };
     },
@@ -2760,6 +2920,7 @@ const atomicMemoryPlugin = {
       log,
       api,
       pendingReflectionSummary: null,
+      pendingIterationReminder: null,
       pendingForget: null,
       testSession: {
         active: false,

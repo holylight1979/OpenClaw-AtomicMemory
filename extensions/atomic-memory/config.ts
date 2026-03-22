@@ -167,6 +167,31 @@ export type AtomicMemoryConfig = {
         /** Analysis window size. Default 5. */
         windowSize: number;
       };
+      /** Phase D: LLM-based critique gate (Constitutional AI 4-rubric). */
+      selfCritique: {
+        /** Enable LLM critique before auto-execution. Default false (opt-in). */
+        enabled: boolean;
+        /** Composite score threshold to pass. Default 0.6. */
+        passThreshold: number;
+        /** Safety score below this → veto (composite capped at 0.4). Default 0.5. */
+        safetyVetoThreshold: number;
+      };
+      /** Phase D: Devil's advocate deterministic gate. */
+      devilsAdvocate: {
+        /** Enable devil's advocate check. Default true. */
+        enabled: boolean;
+        /** Over-speculation threshold (0-1). Default 0.7. */
+        overSpeculationThreshold: number;
+      };
+      /** Phase D: Reflexion buffer config. */
+      reflection: {
+        /** Enable reflection buffer. Default false (opt-in). */
+        enabled: boolean;
+        /** Max reflection entries to keep. Default 10. */
+        maxBufferSize: number;
+        /** Max tokens to inject from reflection context. Default 200. */
+        maxContextTokens: number;
+      };
     };
   };
   permission: {
@@ -289,7 +314,7 @@ export const atomicMemoryConfigSchema = {
 
     // selfIteration.autonomousIteration sub-config
     const autoIterRaw = (selfIterationRaw.autonomousIteration ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(autoIterRaw, ["enabled", "evidenceDecayRate", "entropy", "orderParameter", "flowBalance", "observerOverhead", "staleEvidence", "thresholdBalancer", "wuWei", "convergence", "healthScore"], "selfIteration.autonomousIteration config");
+    assertAllowedKeys(autoIterRaw, ["enabled", "evidenceDecayRate", "entropy", "orderParameter", "flowBalance", "observerOverhead", "staleEvidence", "thresholdBalancer", "wuWei", "convergence", "healthScore", "selfCritique", "devilsAdvocate", "reflection"], "selfIteration.autonomousIteration config");
 
     const entropyRaw = (autoIterRaw.entropy ?? {}) as Record<string, unknown>;
     assertAllowedKeys(entropyRaw, ["enabled", "rigidThreshold", "chaoticThreshold", "tierWeight"], "autonomousIteration.entropy config");
@@ -317,6 +342,15 @@ export const atomicMemoryConfigSchema = {
 
     const healthScoreRaw = (autoIterRaw.healthScore ?? {}) as Record<string, unknown>;
     assertAllowedKeys(healthScoreRaw, ["maxDegradations", "windowSize"], "autonomousIteration.healthScore config");
+
+    const selfCritiqueRaw = (autoIterRaw.selfCritique ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(selfCritiqueRaw, ["enabled", "passThreshold", "safetyVetoThreshold"], "autonomousIteration.selfCritique config");
+
+    const devilsAdvocateRaw = (autoIterRaw.devilsAdvocate ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(devilsAdvocateRaw, ["enabled", "overSpeculationThreshold"], "autonomousIteration.devilsAdvocate config");
+
+    const reflectionRaw = (autoIterRaw.reflection ?? {}) as Record<string, unknown>;
+    assertAllowedKeys(reflectionRaw, ["enabled", "maxBufferSize", "maxContextTokens"], "autonomousIteration.reflection config");
 
     // permission sub-config
     const permissionRaw = (cfg.permission ?? {}) as Record<string, unknown>;
@@ -438,6 +472,20 @@ export const atomicMemoryConfigSchema = {
           healthScore: {
             maxDegradations: numOrDefault(healthScoreRaw.maxDegradations, 3, 1, 20),
             windowSize: numOrDefault(healthScoreRaw.windowSize, 5, 2, 50),
+          },
+          selfCritique: {
+            enabled: boolOrDefault(selfCritiqueRaw.enabled, false),
+            passThreshold: numOrDefault(selfCritiqueRaw.passThreshold, 0.6, 0, 1),
+            safetyVetoThreshold: numOrDefault(selfCritiqueRaw.safetyVetoThreshold, 0.5, 0, 1),
+          },
+          devilsAdvocate: {
+            enabled: boolOrDefault(devilsAdvocateRaw.enabled, true),
+            overSpeculationThreshold: numOrDefault(devilsAdvocateRaw.overSpeculationThreshold, 0.7, 0, 1),
+          },
+          reflection: {
+            enabled: boolOrDefault(reflectionRaw.enabled, false),
+            maxBufferSize: numOrDefault(reflectionRaw.maxBufferSize, 10, 1, 50),
+            maxContextTokens: numOrDefault(reflectionRaw.maxContextTokens, 200, 50, 1000),
           },
         },
       },

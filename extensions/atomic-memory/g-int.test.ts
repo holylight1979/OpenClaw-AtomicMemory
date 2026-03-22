@@ -107,6 +107,9 @@ function makeConfig(overrides?: Partial<AtomicMemoryConfig>): AtomicMemoryConfig
         wuWei: { enabled: true },
         convergence: { epsilon: 0.01, minWindow: 4, ratioThreshold: 0.95 },
         healthScore: { maxDegradations: 3, windowSize: 5 },
+        selfCritique: { enabled: false, passThreshold: 0.6, safetyVetoThreshold: 0.5 },
+        devilsAdvocate: { enabled: true, overSpeculationThreshold: 0.7 },
+        reflection: { enabled: false, maxBufferSize: 10, maxContextTokens: 200 },
       },
     },
     permission: {
