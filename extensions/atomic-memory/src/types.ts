@@ -729,3 +729,83 @@ export type HealthHistoryStore = {
   entries: HealthScoreEntry[];
   lastUpdated: string;
 };
+
+// ============================================================================
+// OETAV Phase C — Execution / Outcome / Self-Critique Types
+// ============================================================================
+
+/** Result of executing (or storing/blocking) a proposal. */
+export type ExecutionResult = {
+  proposalId: string;
+  action: "executed" | "stored-pending" | "blocked";
+  /** For auto actions: what was done. */
+  details?: string;
+  /** ISO-8601 timestamp. */
+  executedAt: string;
+  /** Baseline metrics snapshot taken before execution (for later verification). */
+  baselineSnapshot?: MetricsSnapshot;
+  /** Error message if execution failed. */
+  error?: string;
+};
+
+/** Outcome verdict after comparing baseline vs current metrics. */
+export type OutcomeVerdict = "improved" | "degraded" | "neutral";
+
+/** Result of verifying a proposal's outcome after N sessions. */
+export type OutcomeResult = {
+  proposalId: string;
+  verdict: OutcomeVerdict;
+  /** Which metric(s) drove the verdict. */
+  drivers: Array<{ metric: string; baselineValue: number; currentValue: number; changePercent: number }>;
+  /** ISO-8601 timestamp of verification. */
+  verifiedAt: string;
+  /** Sessions elapsed since execution. */
+  sessionsElapsed: number;
+};
+
+/** Devil's Advocate challenge entry. */
+export type DevilsAdvocateChallenge = {
+  claim: string;
+  challenge: string;
+  severity: "low" | "medium" | "high";
+  simpleAlternative?: string;
+};
+
+/** Result of the deterministic devil's advocate check. */
+export type DevilsAdvocateResult = {
+  passed: boolean;
+  challenges: DevilsAdvocateChallenge[];
+  overSpeculationScore: number;
+  verdict: string;
+};
+
+/** Critique score rubric (stub — Phase D will add LLM scoring). */
+export type CritiqueScore = {
+  safety: number;
+  relevance: number;
+  reversibility: number;
+  evidenceStrength: number;
+};
+
+/** Result of critiqueProposal (stub for Phase D). */
+export type CritiqueResult = {
+  passed: boolean;
+  scores: CritiqueScore;
+  compositeScore: number;
+  issues: string[];
+  suggestions: string[];
+  reasoning: string;
+};
+
+/** Persisted execution record for tracking outcomes. */
+export type ExecutedProposalRecord = {
+  proposal: IterationProposal;
+  executionResult: ExecutionResult;
+  outcome?: OutcomeResult;
+  /** Session key at time of execution (for counting elapsed sessions). */
+  executedAtSession: string;
+  /** Number of sessions to wait before verification. */
+  verifyAfterSessions: number;
+  /** How many sessions have passed since execution. */
+  sessionsSinceExecution: number;
+};
