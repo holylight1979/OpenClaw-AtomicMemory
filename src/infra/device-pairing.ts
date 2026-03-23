@@ -405,6 +405,11 @@ export async function requestDevicePairing(
         isRepair,
         req: {
           ...req,
+          // Merge roles and scopes from all existing pending entries so that
+          // sequential connect attempts with different scopes accumulate rather
+          // than replace each other.
+          roles: mergeRoles(...pendingForDevice.map((p) => p.roles), req.roles, req.role),
+          scopes: mergeScopes(...pendingForDevice.map((p) => p.scopes), req.scopes),
           // Preserve interactive visibility when superseding pending requests:
           // if any previous pending request was interactive, keep this one interactive.
           silent: resolveSupersededPendingSilent({

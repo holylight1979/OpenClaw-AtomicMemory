@@ -143,6 +143,12 @@ export function registerAuthModesSuite(): void {
 
     beforeEach(() => {
       testTailscaleWhois.value = { login: "peter", name: "Peter" };
+      // openTailscaleWs sends origin "https://gateway.tailnet.ts.net" which
+      // triggers the browser origin check — allow it explicitly so the origin
+      // check passes after installGatewayTestHooks resets testState.
+      testState.gatewayControlUi = {
+        allowedOrigins: ["https://gateway.tailnet.ts.net"],
+      };
     });
 
     afterEach(() => {
