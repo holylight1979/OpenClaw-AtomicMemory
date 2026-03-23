@@ -23,19 +23,23 @@ const RULES: ClassificationRule[] = [
     category: "person",
     patterns: [
       // Chinese relationship/title terms
-      /(?:老闆|同事|朋友|客戶|主管|經理|總監|老師|同學|鄰居|家人|太太|先生|爸|媽|哥|姐|弟|妹)/,
+      /(?:老闆|同事|朋友|客戶|主管|經理|總監|老師|同學|鄰居|家人|太太|先生|爸|媽|哥|姐|弟|妹|伴侶|配偶|兒子|女兒|叔|嬸|姑|舅)/,
+      // Chinese job titles
+      /(?:工程師|設計師|PM|產品經理|技術長|CTO|CEO|COO|VP|總經理|董事|顧問|實習生|助理)/,
       // "X 是誰" / "X is my"
-      /(?:是誰|是我的|is\s+my|is\s+a\s+(?:friend|colleague|boss|client))/i,
+      /(?:是誰|是我的|is\s+my|is\s+a\s+(?:friend|colleague|boss|client|partner|mentor))/i,
       // Phone numbers
       /(?:\+?\d{2,4}[\s-]?\d{3,4}[\s-]?\d{3,4})/,
       // Email
       /[\w.-]+@[\w.-]+\.\w+/,
       // "他/她 + verb" patterns
-      /(?:他|她)(?:是|叫|住|在|喜歡|討厭|偏好)/,
+      /(?:他|她)(?:是|叫|住|在|喜歡|討厭|偏好|負責|擅長)/,
       // English name + role patterns
-      /(?:name\s+is|called|known\s+as)/i,
+      /(?:name\s+is|called|known\s+as|works\s+as|reports\s+to)/i,
       // "記住...的" + personal info
-      /記住.{1,10}(?:電話|地址|信箱|email|生日|名字)/,
+      /記住.{1,10}(?:電話|地址|信箱|email|生日|名字|帳號|LINE|IG)/,
+      // Social/messaging IDs
+      /(?:LINE\s*ID|IG|Instagram|Discord|Telegram|WhatsApp)\s*[:：]?\s*\S+/i,
     ],
     weight: 1.0,
   },
@@ -44,17 +48,19 @@ const RULES: ClassificationRule[] = [
     category: "topic",
     patterns: [
       // Project/task terms
-      /(?:專案|計畫|project|任務|task|議題|issue)/i,
+      /(?:專案|計畫|project|任務|task|議題|issue|sprint|milestone)/i,
       // Decision keywords
-      /(?:決定|決策|decided|agreed|確認|結論|定案)/i,
+      /(?:決定|決策|decided|agreed|確認|結論|定案|拍板|共識)/i,
       // Meeting/discussion
-      /(?:討論|會議|meeting|開會|review|檢討)/i,
+      /(?:討論|會議|meeting|開會|review|檢討|retrospective)/i,
       // Budget/planning
-      /(?:預算|budget|規劃|planning|排程|schedule)/i,
+      /(?:預算|budget|規劃|planning|排程|schedule|timeline)/i,
       // Work items
-      /(?:需求|requirement|功能|feature|報告|report)/i,
+      /(?:需求|requirement|功能|feature|報告|report|PR|pull\s*request|deploy)/i,
       // Status update
-      /(?:進度|progress|狀態|status|完成|完工)/i,
+      /(?:進度|progress|狀態|status|完成|完工|上線|release|shipped)/i,
+      // Pitfall/lessons (also topic)
+      /(?:踩坑|教訓|陷阱|gotcha|pitfall|lesson)/i,
     ],
     weight: 0.9,
   },
@@ -65,16 +71,18 @@ const RULES: ClassificationRule[] = [
       // Explicit dates
       /\d{4}[/-]\d{1,2}[/-]\d{1,2}/,
       // Relative time
-      /(?:下週|上週|明天|後天|昨天|今天|下個月|上個月)/,
-      /(?:next\s+(?:week|month|monday|tuesday)|last\s+(?:week|month))/i,
+      /(?:下週|上週|明天|後天|昨天|今天|下個月|上個月|這週|本週)/,
+      /(?:next\s+(?:week|month|monday|tuesday|wednesday|thursday|friday)|last\s+(?:week|month))/i,
       // Time expressions
       /(?:\d{1,2}[:.]\d{2}|上午|下午|早上|晚上|中午)/,
       // Deadline/schedule keywords
-      /(?:截止|deadline|到期|due|提醒|remind|行程|itinerary)/i,
+      /(?:截止|deadline|到期|due|提醒|remind|行程|itinerary|calendar)/i,
       // Recurring patterns
-      /(?:每週|每月|每天|weekly|monthly|daily|定期)/i,
+      /(?:每週|每月|每天|weekly|monthly|daily|定期|固定)/i,
       // Calendar
-      /(?:週[一二三四五六日]|星期[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday)/i,
+      /(?:週[一二三四五六日]|星期[一二三四五六日天]|monday|tuesday|wednesday|thursday|friday|saturday|sunday)/i,
+      // Month/quarter references
+      /(?:Q[1-4]|[一二三四]月|第[一二三四]季|January|February|March|April|May|June|July|August|September|October|November|December)/i,
     ],
     weight: 0.9,
   },
@@ -100,15 +108,17 @@ const RULES: ClassificationRule[] = [
     category: "thing",
     patterns: [
       // Tool/software
-      /(?:工具|tool|軟體|software|app|應用|系統|system|平台|platform)/i,
+      /(?:工具|tool|軟體|software|app|應用|系統|system|平台|platform|framework|library)/i,
       // Document/file
-      /(?:文件|document|檔案|file|模板|template|表格|form)/i,
+      /(?:文件|document|檔案|file|模板|template|表格|form|spreadsheet)/i,
       // Preference
-      /(?:喜歡|prefer|偏好|愛用|常用|favourite|favorite)/i,
+      /(?:喜歡|prefer|偏好|愛用|常用|favourite|favorite|習慣用)/i,
       // Resource
-      /(?:資源|resource|帳號|account|密碼|連結|link|URL)/i,
+      /(?:資源|resource|帳號|account|密碼|連結|link|URL|API\s*key|token)/i,
       // Object/item
-      /(?:買|購|訂|order|東西|物品|設備|device|機器)/i,
+      /(?:買|購|訂|order|東西|物品|設備|device|機器|硬體|hardware)/i,
+      // Tech stack
+      /(?:使用|用了?|安裝|installed|using|stack|tech)\s*(?:[\w.-]+)/i,
     ],
     weight: 0.7,
   },

@@ -36,10 +36,16 @@ export type AtomicMemoryConfig = {
   capture: {
     maxChars: number;
     maxItems: number;
+    /** Enable per-turn incremental extraction via llm_output hook (V2.12). Default false. */
+    perTurnEnabled: boolean;
+    /** Minimum new chars to trigger per-turn extraction. Default 100. */
+    perTurnMinChars: number;
   };
   writeGate: {
     autoThreshold: number;
     dedupScore: number;
+    /** Automatically set pitfall facts to [觀] confidence. Default true. */
+    pitfallAutoObserved: boolean;
   };
   tokenBudget: {
     /** Prompt length threshold: short (< shortThreshold chars). */
@@ -320,11 +326,11 @@ export const atomicMemoryConfigSchema = {
 
     // capture sub-config
     const captureRaw = (cfg.capture ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(captureRaw, ["maxChars", "maxItems"], "capture config");
+    assertAllowedKeys(captureRaw, ["maxChars", "maxItems", "perTurnEnabled", "perTurnMinChars"], "capture config");
 
     // writeGate sub-config
     const writeGateRaw = (cfg.writeGate ?? {}) as Record<string, unknown>;
-    assertAllowedKeys(writeGateRaw, ["autoThreshold", "dedupScore"], "writeGate config");
+    assertAllowedKeys(writeGateRaw, ["autoThreshold", "dedupScore", "pitfallAutoObserved"], "writeGate config");
 
     // tokenBudget sub-config
     const tokenBudgetRaw = (cfg.tokenBudget ?? {}) as Record<string, unknown>;
@@ -437,17 +443,20 @@ export const atomicMemoryConfigSchema = {
       capture: {
         maxChars: numOrDefault(captureRaw.maxChars, 3000, 100, 10000),
         maxItems: numOrDefault(captureRaw.maxItems, 3, 1, 10),
+        perTurnEnabled: boolOrDefault(captureRaw.perTurnEnabled, false),
+        perTurnMinChars: numOrDefault(captureRaw.perTurnMinChars, 100, 10, 5000),
       },
       writeGate: {
         autoThreshold: numOrDefault(writeGateRaw.autoThreshold, 0.50, 0, 1),
         dedupScore: numOrDefault(writeGateRaw.dedupScore, 0.80, 0, 1),
+        pitfallAutoObserved: boolOrDefault(writeGateRaw.pitfallAutoObserved, true),
       },
       tokenBudget: {
         shortThreshold: numOrDefault(tokenBudgetRaw.shortThreshold, 50, 1, 500),
         mediumThreshold: numOrDefault(tokenBudgetRaw.mediumThreshold, 200, 50, 1000),
-        shortBudget: numOrDefault(tokenBudgetRaw.shortBudget, 1500, 500, 10000),
-        mediumBudget: numOrDefault(tokenBudgetRaw.mediumBudget, 3000, 1000, 20000),
-        longBudget: numOrDefault(tokenBudgetRaw.longBudget, 5000, 2000, 30000),
+        shortBudget: numOrDefault(tokenBudgetRaw.shortBudget, 800, 200, 10000),
+        mediumBudget: numOrDefault(tokenBudgetRaw.mediumBudget, 1500, 500, 20000),
+        longBudget: numOrDefault(tokenBudgetRaw.longBudget, 2500, 1000, 30000),
         charsPerToken: numOrDefault(tokenBudgetRaw.charsPerToken, 3.0, 1, 10),
       },
       actr: {
@@ -658,6 +667,17 @@ export const atomicMemoryConfigSchema = {
     "capture.maxChars": {
       label: "Capture Max Chars",
       placeholder: "3000",
+      advanced: true,
+    },
+    "capture.perTurnEnabled": {
+      label: "Per-Turn Extraction",
+      help: "Extract facts incrementally on each LLM output (V2.12)",
+      advanced: true,
+    },
+    "capture.perTurnMinChars": {
+      label: "Per-Turn Min Chars",
+      placeholder: "100",
+      help: "Minimum new chars to trigger per-turn extraction",
       advanced: true,
     },
     "writeGate.autoThreshold": {

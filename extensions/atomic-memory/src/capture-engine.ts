@@ -12,13 +12,13 @@ import type { AtomStore } from "./atom-store.js";
 import type { OllamaClient } from "./ollama-client.js";
 import type { VectorClient } from "./vector-client.js";
 import { classifyFact } from "./classification.js";
-import type { AtomCategory, DedupResult, DedupVerdict, ExtractedFact, WriteGateResult } from "./types.js";
+import type { AtomCategory, Confidence, DedupResult, DedupVerdict, ExtractedFact, WriteGateResult } from "./types.js";
 
 // ============================================================================
 // Extraction prompt
 // ============================================================================
 
-const EXTRACTION_SYSTEM_PROMPT = `Extract reusable factual knowledge from the AI assistant conversation below.
+const EXTRACTION_SYSTEM_PROMPT = `Extract reusable factual knowledge from the conversation below.
 Output a JSON array (always an array, even for a single item). Each item:
 - "text": concise fact (≤150 chars)
 - "category": one of person | topic | event | place | thing
@@ -26,11 +26,24 @@ Output a JSON array (always an array, even for a single item). Each item:
 - "about": subject of the fact (name, object, or null)
 - "when": temporal context if clear (date/time string, or null)
 - "where": location context if clear (place name, or null)
+- "confidence_hint": one of "remember" | "pitfall" | "normal"
 
-Extract: personal info, preferences, contacts, decisions, schedules, locations, relationships, resources.
-Skip: greetings, vague guesses, one-time reactions.
+Category definitions:
+- person（人）: identities, relationships, contact info, personal traits. E.g. "小明是PM,負責Q2專案"
+- topic（事）: projects, decisions, agreements, ongoing work. E.g. "團隊決定用PostgreSQL取代MongoDB"
+- event（時）: dates, deadlines, schedules, meetings. E.g. "3/28前要交付v2.0"
+- place（地）: locations, addresses, venues. E.g. "辦公室在信義區3樓"
+- thing（物）: tools, resources, preferences, objects. E.g. "偏好用VS Code開發"
+
+confidence_hint:
+- "remember": user explicitly asks to remember (記住/remember/以後都)
+- "pitfall": lessons learned, bugs, traps, gotchas (踩坑/陷阱/注意/別再/搞半天)
+- "normal": everything else
+
+Extract: personal info, preferences, contacts, decisions, schedules, locations, relationships, resources, pitfalls.
+Skip: greetings, vague guesses, one-time reactions, pleasantries.
 No facts → output [].
-Example: [{"text":"User lives in Taipei","category":"place","who":"user","about":"user","when":null,"where":"Taipei"}]`;
+Example: [{"text":"User lives in Taipei","category":"place","who":"user","about":"user","when":null,"where":"Taipei","confidence_hint":"normal"}]`;
 
 // ============================================================================
 // Write Gate scoring rules
@@ -111,6 +124,29 @@ function looksLikePromptInjection(text: string): boolean {
   if (!normalized) return false;
   return PROMPT_INJECTION_PATTERNS.some((p) => p.test(normalized));
 }
+
+// ============================================================================
+// Pitfall auto-detection (V2.12)
+// ============================================================================
+
+const PITFALL_PATTERNS = [
+  /踩坑|踩到坑|踩雷|陷阱|地雷|坑點/,
+  /搞半天|搞了半天|弄半天|搞了很久|花了很久/,
+  /別再|不要再|千萬別|切記不要|以後不要/,
+  /注意.*?不[能要]|小心.*?會/,
+  /教訓|學到|才發現原來|原來是因為/,
+  /gotcha|pitfall|trap|watch\s*out|be\s*careful|lesson\s*learned/i,
+  /bug.{0,20}(?:因為|是因|caused\s+by)/i,
+];
+
+function looksLikePitfall(text: string): boolean {
+  return PITFALL_PATTERNS.some((p) => p.test(text));
+}
+
+const REMEMBER_PATTERNS = [
+  /記住|記得|remember|以後都|永遠/i,
+  /我的.{1,6}是|my\s+\w+\s+is/i,
+];
 
 // ============================================================================
 // CaptureEngine
@@ -260,10 +296,21 @@ export class CaptureEngine {
         const when = typeof obj.when === "string" && obj.when !== "null" ? obj.when.trim() : undefined;
         const where = typeof obj.where === "string" && obj.where !== "null" ? obj.where.trim() : undefined;
 
+        // Determine confidence from LLM hint + local detection
+        const hint = typeof obj.confidence_hint === "string" ? obj.confidence_hint : "normal";
+        let confidence: Confidence;
+        if (hint === "remember" || REMEMBER_PATTERNS.some(p => p.test(text))) {
+          confidence = "[固]";
+        } else if (hint === "pitfall" || looksLikePitfall(text)) {
+          confidence = "[觀]";
+        } else {
+          confidence = "[臨]";
+        }
+
         facts.push({
           text,
           category,
-          confidence: "[臨]", // All extracted facts start as temporary
+          confidence,
           ...(who ? { who } : {}),
           ...(about ? { about } : {}),
           ...(when ? { when } : {}),
@@ -274,6 +321,52 @@ export class CaptureEngine {
       return facts;
     } catch {
       return [];
+    }
+  }
+
+  // ==========================================================================
+  // Per-Turn Incremental Extraction (V2.12)
+  // ==========================================================================
+
+  /**
+   * Extract facts from only the new portion of messages since prevOffset.
+   * Used by llm_output hook for incremental per-turn extraction.
+   */
+  async extractPerTurn(
+    messages: unknown[],
+    prevOffset: number,
+    logger?: { info: (msg: string) => void; warn: (msg: string) => void },
+  ): Promise<{ facts: ExtractedFact[]; newOffset: number }> {
+    const fullText = this.extractConversationText(messages);
+    const newOffset = fullText.length;
+
+    // Only extract from new content
+    const newContent = fullText.slice(prevOffset);
+    logger?.info(`atomic-memory: perTurn delta ${newContent.length} chars (offset ${prevOffset}→${newOffset})`);
+
+    if (newContent.length < 30) {
+      return { facts: [], newOffset };
+    }
+
+    const truncated = newContent.slice(0, this.maxChars);
+
+    try {
+      const response = await this.ollama.chat(
+        EXTRACTION_SYSTEM_PROMPT,
+        truncated,
+        {
+          jsonMode: true,
+          temperature: 0.1,
+          maxTokens: 500,
+          timeoutMs: 15_000,
+        },
+      );
+
+      logger?.info(`atomic-memory: perTurn response (first 200): ${response.slice(0, 200)}`);
+      return { facts: this.parseExtractionResponse(response), newOffset };
+    } catch (err) {
+      logger?.warn(`atomic-memory: perTurn extraction error: ${err instanceof Error ? err.message : String(err)}`);
+      return { facts: [], newOffset };
     }
   }
 

@@ -60,6 +60,17 @@
       "placeholder": "3000",
       "advanced": true
     },
+    "capture.perTurnEnabled": {
+      "label": "Per-Turn Extraction",
+      "help": "Extract facts incrementally on each LLM output (V2.12)",
+      "advanced": true
+    },
+    "capture.perTurnMinChars": {
+      "label": "Per-Turn Min Chars",
+      "placeholder": "100",
+      "help": "Minimum new chars to trigger per-turn extraction",
+      "advanced": true
+    },
     "writeGate.autoThreshold": {
       "label": "Write Gate Threshold",
       "placeholder": "0.50",
@@ -72,23 +83,27 @@
       "help": "Similarity score threshold for deduplication",
       "advanced": true
     },
+    "writeGate.pitfallAutoObserved": {
+      "label": "Pitfall Auto [觀]",
+      "help": "Automatically set pitfall/trap facts to [觀] confidence"
+    },
     "memoryIsolation": {
       "label": "Memory Isolation",
       "help": "Memory isolation mode: shared, user-scoped, or owner-only"
     },
     "tokenBudget.shortBudget": {
       "label": "Short Prompt Token Budget",
-      "placeholder": "1500",
+      "placeholder": "800",
       "advanced": true
     },
     "tokenBudget.mediumBudget": {
       "label": "Medium Prompt Token Budget",
-      "placeholder": "3000",
+      "placeholder": "1500",
       "advanced": true
     },
     "tokenBudget.longBudget": {
       "label": "Long Prompt Token Budget",
-      "placeholder": "5000",
+      "placeholder": "2500",
       "advanced": true
     },
     "actr.weight": {
@@ -191,7 +206,9 @@
         "additionalProperties": false,
         "properties": {
           "maxChars": { "type": "number", "minimum": 100, "maximum": 10000 },
-          "maxItems": { "type": "number", "minimum": 1, "maximum": 10 }
+          "maxItems": { "type": "number", "minimum": 1, "maximum": 10 },
+          "perTurnEnabled": { "type": "boolean" },
+          "perTurnMinChars": { "type": "number", "minimum": 10, "maximum": 5000 }
         }
       },
       "writeGate": {
@@ -199,7 +216,8 @@
         "additionalProperties": false,
         "properties": {
           "autoThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
-          "dedupScore": { "type": "number", "minimum": 0, "maximum": 1 }
+          "dedupScore": { "type": "number", "minimum": 0, "maximum": 1 },
+          "pitfallAutoObserved": { "type": "boolean" }
         }
       },
       "memoryIsolation": {

@@ -172,6 +172,8 @@ type PluginState = {
   pendingIdentityAlert: string | null;
   // Atoms touched this turn (for MEMORY.md scoring)
   turnTouchedAtoms: TouchedAtom[];
+  // Per-turn incremental extraction state (V2.12)
+  perTurnContentOffset: number;
 };
 
 // ============================================================================
@@ -596,18 +598,74 @@ function registerHooks(state: PluginState): void {
 
         log.info(`injecting ${atoms.length} atoms into context for channel ${channelId}`);
 
+        const memoriesBlock = formatAtomicMemoriesContext(atoms, channelId, event.prompt?.length, {
+          light: cfg.tokenBudget.shortBudget,
+          normal: cfg.tokenBudget.mediumBudget,
+          deep: cfg.tokenBudget.longBudget,
+          charsPerToken: cfg.tokenBudget.charsPerToken,
+          intent: intentResult.intent,
+        });
+
+        // Merge all context parts — skip empty blocks
+        const parts = [memoriesBlock, wisdomInject, blindSpotSuffix, capabilityCtx, pendingAccessCtx, mergeSuffix, testCheckSuffix].filter(Boolean);
+        if (parts.length === 0) return;
+
         return {
-          prependContext: formatAtomicMemoriesContext(atoms, channelId, event.prompt?.length, {
-            light: cfg.tokenBudget.shortBudget,
-            normal: cfg.tokenBudget.mediumBudget,
-            deep: cfg.tokenBudget.longBudget,
-            charsPerToken: cfg.tokenBudget.charsPerToken,
-          }) + wisdomInject + blindSpotSuffix + capabilityCtx + pendingAccessCtx + mergeSuffix + testCheckSuffix,
+          prependContext: parts.join(""),
         };
       } catch (err) {
         log.warn(`recall failed: ${String(err)}`);
       }
     }, { priority: 50 });
+  }
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Hook 1.5: Per-Turn Incremental Extraction (llm_output) — V2.12
+  // ──────────────────────────────────────────────────────────────────────────
+
+  if (cfg.autoCapture && cfg.capture.perTurnEnabled) {
+    api.on("llm_output", async (event, ctx) => {
+      // assistantTexts contains the LLM output texts for this turn
+      if (!event.assistantTexts || event.assistantTexts.length === 0) return;
+
+      const channelId = ctx.channelId ?? "unknown";
+      const senderId = ctx.senderId;
+      if (cfg.memoryIsolation === "owner-only" && ctx.senderIsOwner === false) return;
+
+      // Build synthetic messages from assistantTexts for the extraction engine
+      const syntheticMessages = event.assistantTexts.map(t => ({ role: "assistant", content: t }));
+
+      try {
+        const { facts, newOffset } = await capture.extractPerTurn(
+          syntheticMessages,
+          state.perTurnContentOffset,
+          api.logger,
+        );
+        state.perTurnContentOffset = newOffset;
+
+        if (facts.length === 0) return;
+        log.info(`perTurn: ${facts.length} facts extracted (channel: ${channelId})`);
+
+        for (const fact of facts) {
+          const gate = capture.evaluateQuality(fact);
+          if (gate.action === "skip") continue;
+          if (gate.action === "ask") continue; // per-turn only auto-stores high quality
+
+          const dedup = await capture.checkDuplicate(fact.text);
+          if (dedup.verdict === "duplicate") continue;
+
+          const factScope = classifyScope("general", fact.text);
+          await store.findOrCreate(fact.category, fact, {
+            channel: channelId !== "unknown" ? channelId : undefined,
+            senderId,
+            scope: factScope,
+          });
+          log.info(`perTurn stored: [${fact.category}] "${fact.text.slice(0, 60)}"`);
+        }
+      } catch (err) {
+        log.warn(`perTurn extraction failed: ${String(err)}`);
+      }
+    }, { priority: 30 });
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -3296,6 +3354,7 @@ const atomicMemoryPlugin = {
       runtimeAdminIds: [],
       systemIdentity: null,
       turnTouchedAtoms: [],
+      perTurnContentOffset: 0,
     };
 
     // Load System.Owner.json identity registry (non-blocking)
