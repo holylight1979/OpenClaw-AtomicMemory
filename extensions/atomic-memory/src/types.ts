@@ -170,6 +170,20 @@ export type DedupResult = {
 };
 
 // ============================================================================
+// Conflict Detection (V2.1.2: LLM 4-verdict)
+// ============================================================================
+
+export type ConflictVerdict = "agree" | "contradict" | "extend" | "unrelated";
+
+export type ConflictResult = {
+  verdict: ConflictVerdict;
+  /** LLM confidence 0-1 (0 if fallback to keyword detection). */
+  confidence: number;
+  /** Brief reason from LLM (empty if fallback). */
+  reason: string;
+};
+
+// ============================================================================
 // Promotion
 // ============================================================================
 

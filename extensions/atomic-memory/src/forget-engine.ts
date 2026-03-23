@@ -1,10 +1,17 @@
 /**
- * Forget Intent Detection & Contradiction Detection
+ * Forget Intent Detection & Contradiction Detection & Delete Propagation
  *
  * Extracted from index.ts for modularity.
  * - detectForgetIntent: identifies user requests to forget/delete memories
- * - detectContradiction: checks if a new fact negates an existing atom
+ * - detectContradiction: keyword-based negation check (fallback)
+ * - detectConflictLLM: LLM-based 4-verdict conflict classification
+ * - propagateDelete: full-chain delete with related[] cleanup + vector purge
  */
+
+import type { OllamaClient } from "./ollama-client.js";
+import type { AtomCategory, ConflictResult, ConflictVerdict } from "./types.js";
+import type { AtomStore } from "./atom-store.js";
+import type { VectorClient } from "./vector-client.js";
 
 // ============================================================================
 // Forget intent detection (方案 A: hook-level auto-delete)
@@ -114,4 +121,125 @@ export function detectContradiction(newFact: string, existingKnowledge: string):
 
   // At least 1 overlapping content word = likely contradiction
   return overlap >= 1;
+}
+
+// ============================================================================
+// LLM-based 4-verdict conflict detection (V2.1.2)
+// ============================================================================
+
+const CONFLICT_SYSTEM_PROMPT = `You are a fact-relationship classifier. Given two facts (A = existing, B = new), output exactly one JSON object with:
+- "verdict": one of "agree", "contradict", "extend", "unrelated"
+- "confidence": number 0-1
+- "reason": brief explanation (≤20 words)
+
+Definitions:
+- agree: B says the same thing as A
+- contradict: B negates or replaces A (cannot both be true)
+- extend: B adds detail to A (both can be true, B is more specific)
+- unrelated: A and B are about different topics
+
+Reply with ONLY the JSON object, no markdown fences.`;
+
+/**
+ * LLM-based conflict detection with 4 verdicts.
+ * Falls back to keyword-based detectContradiction() on timeout or error.
+ */
+export async function detectConflictLLM(
+  newFact: string,
+  existingKnowledge: string,
+  ollama: OllamaClient,
+): Promise<ConflictResult> {
+  // Fallback helper
+  const fallback = (): ConflictResult => {
+    const isContradiction = detectContradiction(newFact, existingKnowledge);
+    return {
+      verdict: isContradiction ? "contradict" : "unrelated",
+      confidence: 0,
+      reason: "keyword fallback",
+    };
+  };
+
+  if (!ollama.isHealthy()) return fallback();
+
+  try {
+    const prompt = `A (existing): ${existingKnowledge.slice(0, 200)}\nB (new): ${newFact.slice(0, 200)}`;
+    const response = await ollama.chat(
+      CONFLICT_SYSTEM_PROMPT,
+      prompt,
+      { jsonMode: true, temperature: 0.0, maxTokens: 100, timeoutMs: 5_000 },
+    );
+
+    const parsed = JSON.parse(response) as { verdict?: string; confidence?: number; reason?: string };
+    const validVerdicts: ConflictVerdict[] = ["agree", "contradict", "extend", "unrelated"];
+    const verdict = validVerdicts.includes(parsed.verdict as ConflictVerdict)
+      ? (parsed.verdict as ConflictVerdict)
+      : undefined;
+
+    if (!verdict) return fallback();
+
+    return {
+      verdict,
+      confidence: typeof parsed.confidence === "number" ? Math.min(1, Math.max(0, parsed.confidence)) : 0.5,
+      reason: typeof parsed.reason === "string" ? parsed.reason.slice(0, 80) : "",
+    };
+  } catch {
+    return fallback();
+  }
+}
+
+// ============================================================================
+// Full-chain delete propagation (V2.1.2)
+// ============================================================================
+
+export type PropagateDeleteResult = {
+  deletedRef: string;
+  vectorsDeleted: boolean;
+  affectedAtoms: string[];
+};
+
+/**
+ * Delete an atom and propagate the deletion:
+ * 1. Remove from vector DB
+ * 2. Scan all atoms' related[] and remove references to the deleted atom
+ * 3. Return list of affected atoms
+ */
+export async function propagateDelete(
+  category: AtomCategory,
+  id: string,
+  store: AtomStore,
+  vectors: VectorClient,
+  options: { archive?: boolean } = {},
+): Promise<PropagateDeleteResult | null> {
+  const atomRef = `${category}/${id}`;
+  const exists = store.exists(category, id);
+  if (!exists) return null;
+
+  // Step 1: Delete or archive the atom itself
+  if (options.archive) {
+    await store.moveToDistant(category, id);
+  } else {
+    await store.delete(category, id);
+  }
+
+  // Step 2: Delete vector chunks
+  let vectorsDeleted = false;
+  try {
+    await vectors.deleteAtom(atomRef);
+    vectorsDeleted = true;
+  } catch {
+    // Vector DB might be unavailable — non-fatal
+  }
+
+  // Step 3: Scan all atoms and remove dangling related[] references
+  const affectedAtoms: string[] = [];
+  const allAtoms = await store.list();
+  for (const atom of allAtoms) {
+    if (atom.related.includes(atomRef)) {
+      const cleaned = atom.related.filter((r) => r !== atomRef);
+      await store.update(atom.category, atom.id, { related: cleaned });
+      affectedAtoms.push(`${atom.category}/${atom.id}`);
+    }
+  }
+
+  return { deletedRef: atomRef, vectorsDeleted, affectedAtoms };
 }

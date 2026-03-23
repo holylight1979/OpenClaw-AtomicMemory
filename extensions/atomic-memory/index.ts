@@ -17,7 +17,7 @@ import { CaptureEngine } from "./src/capture-engine.js";
 import { formatAtomicMemoriesContext } from "./src/context-formatter.js";
 import { consolidateNewFacts } from "./src/cross-session.js";
 import { ensurePersonAtom, linkPersonAcrossPlatforms } from "./src/entity-resolver.js";
-import { detectContradiction, detectForgetIntent } from "./src/forget-engine.js";
+import { detectContradiction, detectConflictLLM, detectForgetIntent, propagateDelete } from "./src/forget-engine.js";
 import { detectBlindSpot } from "./src/blind-spot.js";
 import { generateEpisodicSummary, storeEpisodicAtom, cleanExpiredEpisodic, listEpisodicSummaries } from "./src/episodic-engine.js";
 import { classifyIntent } from "./src/intent-classifier.js";
@@ -753,15 +753,26 @@ function registerHooks(state: PluginState): void {
           const dedup = await capture.checkDuplicate(fact.text);
           if (dedup.verdict === "duplicate") { skippedDedup++; continue; }
 
-          // Contradiction detection
+          // 4-verdict conflict detection (V2.1.2: LLM with keyword fallback)
           if (dedup.verdict === "similar" && dedup.existingAtom) {
             const existingAtom = await store.get(
               dedup.existingAtom.category as AtomCategory,
               dedup.existingAtom.id,
             );
-            if (existingAtom && detectContradiction(fact.text, existingAtom.knowledge)) {
+            if (!existingAtom) { stored++; continue; }
+
+            const conflict = await detectConflictLLM(fact.text, existingAtom.knowledge, ollama);
+            log.info(`conflict verdict: ${conflict.verdict} (conf=${conflict.confidence.toFixed(2)}) "${fact.text.slice(0, 40)}" vs "${existingAtom.knowledge.slice(0, 40)}"`);
+
+            if (conflict.verdict === "agree") {
+              // Same fact — treat as duplicate, skip
+              skippedDedup++;
+              continue;
+            }
+
+            if (conflict.verdict === "contradict") {
               const oldRef = `${existingAtom.category}/${existingAtom.id}`;
-              log.info(`CONTRADICTION detected! "${fact.text.slice(0, 50)}" vs "${existingAtom.knowledge.slice(0, 50)}" → superseding ${oldRef}`);
+              log.info(`CONTRADICT → superseding ${oldRef}`);
               await store.moveToDistant(existingAtom.category, existingAtom.id);
               await vectors.deleteAtom(oldRef);
 
@@ -772,7 +783,7 @@ function registerHooks(state: PluginState): void {
                 scope: factScope,
               });
               await store.update(fact.category, newAtom.id, {
-                appendEvolution: `${new Date().toISOString().slice(0, 10)}: supersedes ${oldRef}(${channelId}) — 矛盾偵測自動取代`,
+                appendEvolution: `${new Date().toISOString().slice(0, 10)}: supersedes ${oldRef}(${channelId}) — ${conflict.reason || "矛盾偵測自動取代"}`,
               });
               const chunks = chunkAtom(newAtom);
               if (chunks.length > 0) {
@@ -782,19 +793,23 @@ function registerHooks(state: PluginState): void {
               continue;
             }
 
-            // No contradiction — normal update
-            await store.update(
-              dedup.existingAtom.category as AtomCategory,
-              dedup.existingAtom.id,
-              {
-                appendKnowledge: fact.text,
-                lastUsed: new Date().toISOString().slice(0, 10),
-                appendEvolution: `${new Date().toISOString().slice(0, 10)}: 更新(${channelId}) — ${fact.text.slice(0, 40)}`,
-                ...(captureSenderId ? { sources: [{ channel: channelId, senderId: captureSenderId }] } : {}),
-              },
-            );
-            stored++;
-            continue;
+            if (conflict.verdict === "extend") {
+              // Extends existing knowledge — append
+              await store.update(
+                dedup.existingAtom.category as AtomCategory,
+                dedup.existingAtom.id,
+                {
+                  appendKnowledge: fact.text,
+                  lastUsed: new Date().toISOString().slice(0, 10),
+                  appendEvolution: `${new Date().toISOString().slice(0, 10)}: 延伸(${channelId}) — ${fact.text.slice(0, 40)}`,
+                  ...(captureSenderId ? { sources: [{ channel: channelId, senderId: captureSenderId }] } : {}),
+                },
+              );
+              stored++;
+              continue;
+            }
+
+            // verdict === "unrelated" — fall through to create new atom
           }
 
           // Create new atom (G1-B: scope-aware)
@@ -1815,34 +1830,21 @@ function registerTools(state: PluginState): void {
             };
           }
 
-          if (archive) {
-            const moved = await store.moveToDistant(category, id);
-            if (!moved) {
-              return {
-                content: [{ type: "text", text: `Atom not found: ${atomRef}` }],
-                details: { error: "not_found" },
-              };
-            }
-            await vectors.deleteAtom(`${category}/${id}`);
-            await store.updateMemoryIndex();
-            return {
-              content: [{ type: "text", text: `Archived: ${atomRef}` }],
-              details: { action: "archived", ref: atomRef },
-            };
-          }
-
-          const deleted = await store.delete(category, id);
-          if (!deleted) {
+          const result = await propagateDelete(category, id, store, vectors, { archive });
+          if (!result) {
             return {
               content: [{ type: "text", text: `Atom not found: ${atomRef}` }],
               details: { error: "not_found" },
             };
           }
-          await vectors.deleteAtom(`${category}/${id}`);
           await store.updateMemoryIndex();
+          const actionLabel = archive ? "Archived" : "Deleted";
+          const affectedMsg = result.affectedAtoms.length > 0
+            ? ` (cleaned related[] in ${result.affectedAtoms.length} atom(s))`
+            : "";
           return {
-            content: [{ type: "text", text: `Deleted: ${atomRef}` }],
-            details: { action: "deleted", ref: atomRef },
+            content: [{ type: "text", text: `${actionLabel}: ${atomRef}${affectedMsg}` }],
+            details: { action: archive ? "archived" : "deleted", ref: atomRef, affectedAtoms: result.affectedAtoms },
           };
         }
 
@@ -1879,21 +1881,20 @@ function registerTools(state: PluginState): void {
                 };
               }
             }
-            if (archive) {
-              await store.moveToDistant(target.atom.category, target.atom.id);
-            } else {
-              await store.delete(target.atom.category, target.atom.id);
-            }
-            await vectors.deleteAtom(ref);
+            const delResult = await propagateDelete(target.atom.category, target.atom.id, store, vectors, { archive });
             await store.updateMemoryIndex();
+            const delLabel = archive ? "Archived" : "Deleted";
+            const delAffected = delResult?.affectedAtoms.length
+              ? ` (cleaned related[] in ${delResult.affectedAtoms.length} atom(s))`
+              : "";
             return {
               content: [
                 {
                   type: "text",
-                  text: `${archive ? "Archived" : "Deleted"}: ${ref} — ${target.atom.knowledge.slice(0, 80)}`,
+                  text: `${delLabel}: ${ref} — ${target.atom.knowledge.slice(0, 80)}${delAffected}`,
                 },
               ],
-              details: { action: archive ? "archived" : "deleted", ref },
+              details: { action: archive ? "archived" : "deleted", ref, affectedAtoms: delResult?.affectedAtoms ?? [] },
             };
           }
 
