@@ -63,7 +63,15 @@ function stagePluginRuntimeOverlay(sourceDir, targetDir) {
     }
 
     if (dirent.isSymbolicLink()) {
-      fs.symlinkSync(fs.readlinkSync(sourcePath), targetPath);
+      try {
+        fs.symlinkSync(fs.readlinkSync(sourcePath), targetPath);
+      } catch (err) {
+        if (err.code === "EPERM" || err.code === "ENOSYS") {
+          fs.copyFileSync(sourcePath, targetPath);
+        } else {
+          throw err;
+        }
+      }
       continue;
     }
 
@@ -81,7 +89,15 @@ function stagePluginRuntimeOverlay(sourceDir, targetDir) {
       continue;
     }
 
-    symlinkPath(sourcePath, targetPath);
+    try {
+      symlinkPath(sourcePath, targetPath);
+    } catch (err) {
+      if (err.code === "EPERM" || err.code === "ENOSYS") {
+        fs.copyFileSync(sourcePath, targetPath);
+      } else {
+        throw err;
+      }
+    }
   }
 }
 
