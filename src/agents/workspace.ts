@@ -36,6 +36,19 @@ const WORKSPACE_STATE_FILENAME = "workspace-state.json";
 const WORKSPACE_STATE_VERSION = 1;
 
 const workspaceTemplateCache = new Map<string, Promise<string>>();
+
+// [MD-Source] templates/HEARTBEAT.md:1-14 — skip effectively empty heartbeat
+function isEffectivelyEmptyHeartbeat(content: string): boolean {
+  for (const line of content.split("\n")) {
+    const t = line.trim();
+    if (!t || t.startsWith("#") || t.startsWith("```") || t.startsWith("<!--") || t === "-->") {
+      continue;
+    }
+    return false;
+  }
+  return true;
+}
+
 let gitAvailabilityPromise: Promise<boolean> | null = null;
 const MAX_WORKSPACE_BOOTSTRAP_FILE_BYTES = 2 * 1024 * 1024;
 
@@ -533,6 +546,14 @@ export async function loadWorkspaceBootstrapFiles(dir: string): Promise<Workspac
       workspaceDir: resolvedDir,
     });
     if (loaded.ok) {
+      // [MD-Source] templates/HEARTBEAT.md:1-14 — skip effectively empty heartbeat
+      if (
+        entry.name === DEFAULT_HEARTBEAT_FILENAME &&
+        isEffectivelyEmptyHeartbeat(loaded.content)
+      ) {
+        result.push({ name: entry.name, path: entry.filePath, missing: true });
+        continue;
+      }
       result.push({
         name: entry.name,
         path: entry.filePath,
