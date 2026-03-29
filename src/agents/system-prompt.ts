@@ -144,6 +144,30 @@ function buildMessagingSection(params: {
   ];
 }
 
+// [MD-Source] templates/AGENTS.md:128-133 §Platform Formatting
+function buildPlatformFormattingSection(params: { isMinimal: boolean; runtimeChannel?: string }) {
+  if (params.isMinimal || !params.runtimeChannel) {
+    return [];
+  }
+  const channel = params.runtimeChannel;
+  if (channel === "discord") {
+    return [
+      "## Platform Formatting",
+      "- No markdown tables; use bullet lists instead.",
+      "- Wrap links in `<>` to suppress embeds.",
+      "",
+    ];
+  }
+  if (channel === "whatsapp") {
+    return [
+      "## Platform Formatting",
+      "- No markdown tables or headers; use **bold** or CAPS for emphasis.",
+      "",
+    ];
+  }
+  return [];
+}
+
 function buildVoiceSection(params: { isMinimal: boolean; ttsHint?: string }) {
   if (params.isMinimal) {
     return [];
@@ -566,6 +590,7 @@ export function buildAgentSystemPrompt(params: {
       messageToolHints: params.messageToolHints,
     }),
     ...buildVoiceSection({ isMinimal, ttsHint: params.ttsHint }),
+    ...buildPlatformFormattingSection({ isMinimal, runtimeChannel }),
   ];
 
   if (extraSystemPrompt) {
