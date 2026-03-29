@@ -27,6 +27,7 @@ import { handleMcpCommand } from "./commands-mcp.js";
 import { handleModelsCommand } from "./commands-models.js";
 import { handlePluginCommand } from "./commands-plugin.js";
 import { handlePluginsCommand } from "./commands-plugins.js";
+import { handlePromoteCommand, handleDemoteCommand } from "./commands-promote.js";
 import {
   handleAbortTrigger,
   handleActivationCommand,
@@ -192,6 +193,8 @@ export async function handleCommands(params: HandleCommandsParams): Promise<Comm
       handleStatusCommand,
       handleAllowlistCommand,
       handleApproveCommand,
+      handlePromoteCommand,
+      handleDemoteCommand,
       handleContextCommand,
       handleExportSessionCommand,
       handleWhoamiCommand,

@@ -2230,6 +2230,154 @@ function registerTools(state: PluginState): void {
     { name: "atom_permission" },
   );
 
+  // manage_user_role — natural language role management (owner-only)
+  api.registerTool(
+    ((toolCtx: OpenClawPluginToolContext) => ({
+      name: "manage_user_role",
+      label: "Manage User Role",
+      description:
+        "Promote a user to admin or demote an admin back to user. " +
+        "Use when the owner says things like 'promote Holy to admin', " +
+        "'make user123 an admin', '把Holy設為admin', 'demote user456', or 'remove admin from user789'.",
+      parameters: Type.Object({
+        action: Type.Unsafe<"promote" | "demote" | "list_admins">({
+          type: "string",
+          enum: ["promote", "demote", "list_admins"],
+          description: "Action: promote to admin, demote from admin, or list current system admins",
+        }),
+        userName: Type.Optional(Type.String({
+          description: "Display name or platform ID of the target user (required for promote/demote)",
+        })),
+        platform: Type.Optional(Type.String({
+          description: "Optional: restrict lookup to a specific platform (line, discord)",
+        })),
+      }),
+      async execute(_toolCallId: string, params: unknown) {
+        if (toolCtx.senderIsOwner !== true) {
+          return {
+            content: [{ type: "text", text: "Permission denied: only the owner can manage user roles." }],
+            details: { error: "permission_denied" },
+          };
+        }
+
+        const { action, userName, platform } = params as {
+          action: "promote" | "demote" | "list_admins";
+          userName?: string;
+          platform?: string;
+        };
+
+        const identity = await loadSystemIdentity(cfg.systemIdentityPath);
+        if (!identity) {
+          return {
+            content: [{ type: "text", text: "System.Owner.json not found." }],
+            details: { error: "identity_not_found" },
+          };
+        }
+
+        if (action === "list_admins") {
+          const admins = identity.admins;
+          if (admins.length === 0) {
+            return {
+              content: [{ type: "text", text: "No system admins configured." }],
+              details: { admins: [] },
+            };
+          }
+          const list = admins.map((a) => `- ${a.displayName ?? a.userId} (${a.platform ?? "any"}:${a.userId})`).join("\n");
+          return {
+            content: [{ type: "text", text: `Current system admins:\n${list}` }],
+            details: { admins },
+          };
+        }
+
+        if (!userName) {
+          return {
+            content: [{ type: "text", text: "Please specify a user name or ID." }],
+            details: { error: "missing_user" },
+          };
+        }
+
+        // Dynamic import to avoid hard dependency on user-registry at plugin load time
+        const { loadUserRegistry, lookupByName, lookupByPlatformId, formatLookupResult } =
+          await import("openclaw/plugin-sdk/user-registry");
+
+        const registry = await loadUserRegistry();
+        let results = lookupByName(registry, userName, platform ?? toolCtx.messageChannel);
+        if (results.length === 0 && !platform) {
+          results = lookupByName(registry, userName);
+        }
+        if (results.length === 0) {
+          const byId = lookupByPlatformId(registry, userName, platform ?? toolCtx.messageChannel);
+          if (byId) results = [byId];
+        }
+        if (results.length === 0) {
+          return {
+            content: [{ type: "text", text: `No user found matching "${userName}". They need to send a message in a group first to be registered.` }],
+            details: { error: "user_not_found", query: userName },
+          };
+        }
+
+        // Ambiguous match
+        if (results.length > 1 && results[0].score === results[1].score) {
+          const list = results.slice(0, 5).map((r) => `- ${formatLookupResult(r)}`).join("\n");
+          return {
+            content: [{ type: "text", text: `Multiple users match "${userName}":\n${list}\nPlease be more specific.` }],
+            details: { error: "ambiguous", candidates: results.slice(0, 5).map((r) => r.entry) },
+          };
+        }
+
+        const target = results[0].entry;
+
+        if (action === "promote") {
+          const alreadyAdmin = identity.admins.some(
+            (a) => a.userId === target.platformId && (!a.platform || a.platform === target.platform),
+          );
+          if (alreadyAdmin) {
+            return {
+              content: [{ type: "text", text: `${target.displayName} is already an admin.` }],
+              details: { action: "promote", status: "already_admin", user: target },
+            };
+          }
+          identity.admins.push({
+            userId: target.platformId,
+            platform: target.platform,
+            displayName: target.displayName,
+          });
+          await saveSystemIdentity(identity, cfg.systemIdentityPath);
+          invalidateSystemIdentityCache();
+          return {
+            content: [{ type: "text", text: `Promoted ${target.displayName} (${target.platform}:${target.platformId}) to admin.` }],
+            details: { action: "promote", status: "success", user: target },
+          };
+        }
+
+        if (action === "demote") {
+          const idx = identity.admins.findIndex(
+            (a) => a.userId === target.platformId && (!a.platform || a.platform === target.platform),
+          );
+          if (idx === -1) {
+            return {
+              content: [{ type: "text", text: `${target.displayName} is not a system admin.` }],
+              details: { action: "demote", status: "not_admin", user: target },
+            };
+          }
+          identity.admins.splice(idx, 1);
+          await saveSystemIdentity(identity, cfg.systemIdentityPath);
+          invalidateSystemIdentityCache();
+          return {
+            content: [{ type: "text", text: `Demoted ${target.displayName} from admin to user.` }],
+            details: { action: "demote", status: "success", user: target },
+          };
+        }
+
+        return {
+          content: [{ type: "text", text: "Invalid action." }],
+          details: { error: "invalid_action" },
+        };
+      },
+    })) as OpenClawPluginToolFactory,
+    { name: "manage_user_role" },
+  );
+
   // ──────────────────────────────────────────────────────────────────────────
   // Self-Iterate Tools (Phase 4) — owner-only, requires codeModification.enabled
   // ──────────────────────────────────────────────────────────────────────────

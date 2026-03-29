@@ -882,6 +882,37 @@ function buildChatCommands(): ChatCommandDefinition[] {
       category: "management",
       permissionLevel: "owner",
     }),
+    // ── Role management ───────────────────────────────────────────────────
+    defineChatCommand({
+      key: "promote",
+      description: "Promote a user to admin.",
+      textAlias: "/promote",
+      category: "management",
+      permissionLevel: "owner",
+      acceptsArgs: true,
+      args: [
+        {
+          name: "user",
+          description: "Display name or platform ID of the user to promote",
+          type: "string",
+        },
+      ],
+    }),
+    defineChatCommand({
+      key: "demote",
+      description: "Demote an admin back to user.",
+      textAlias: "/demote",
+      category: "management",
+      permissionLevel: "owner",
+      acceptsArgs: true,
+      args: [
+        {
+          name: "user",
+          description: "Display name or platform ID of the admin to demote",
+          type: "string",
+        },
+      ],
+    }),
     ...listChannelPlugins()
       .filter((plugin) => plugin.capabilities.nativeCommands)
       .map((plugin) => defineDockCommand(plugin)),

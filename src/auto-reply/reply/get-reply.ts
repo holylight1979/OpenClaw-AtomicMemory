@@ -9,6 +9,8 @@ import { resolveAgentTimeoutMs } from "../../agents/timeout.js";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../../agents/workspace.js";
 import { resolveChannelModelOverride } from "../../channels/model-overrides.js";
 import { type OpenClawConfig, loadConfig } from "../../config/config.js";
+import { addChannelAllowFromStoreEntry } from "../../pairing/pairing-store.js";
+import { upsertRegistryEntry } from "../../user-registry/index.js";
 import { defaultRuntime } from "../../runtime.js";
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import { resolveCommandAuthorization } from "../command-auth.js";
@@ -418,11 +420,35 @@ export async function getReplyFromConfig(
   directives = inlineActionResult.directives;
   abortedLastRun = inlineActionResult.abortedLastRun ?? abortedLastRun;
 
-  // Guest chat interception: non-command messages from guests → fixed reply, no LLM
+  // Group user registry: update displayName/lastSeen for every group message (fire-and-forget)
+  if (command.senderId && isGroup) {
+    void upsertRegistryEntry({
+      platform: command.channel,
+      platformId: command.senderId,
+      displayName: command.from ?? command.senderId,
+      groupId: groupResolution?.key,
+    }).catch(() => {});
+  }
+
+  // Guest auto-promotion: first group message → auto-promote to user
   if (command.senderPermissionLevel === "guest") {
-    return {
-      text: "你尚未取得使用權限。請使用 /request-access 提請認證。",
-    };
+    if (isGroup && command.senderId) {
+      try {
+        await addChannelAllowFromStoreEntry({
+          channel: command.channel,
+          entry: command.senderId,
+          accountId: finalized.AccountId,
+        });
+        command.senderPermissionLevel = "user";
+      } catch {
+        // Promotion failed — fall through to guest gate
+      }
+    }
+    if (command.senderPermissionLevel === "guest") {
+      return {
+        text: "你尚未取得使用權限。請使用 /request-access 提請認證。",
+      };
+    }
   }
 
   await stageSandboxMedia({

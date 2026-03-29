@@ -401,6 +401,10 @@
       "types": "./dist/plugin-sdk/permission-level.d.ts",
       "default": "./dist/plugin-sdk/permission-level.js"
     },
+    "./plugin-sdk/user-registry": {
+      "types": "./dist/plugin-sdk/user-registry.d.ts",
+      "default": "./dist/plugin-sdk/user-registry.js"
+    },
     "./plugin-sdk/minimax-portal-auth": {
       "types": "./dist/plugin-sdk/minimax-portal-auth.d.ts",
       "default": "./dist/plugin-sdk/minimax-portal-auth.js"
