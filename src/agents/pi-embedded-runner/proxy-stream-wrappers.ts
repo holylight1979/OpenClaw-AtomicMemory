@@ -77,9 +77,22 @@ export function createOpenRouterSystemCacheWrapper(baseStreamFn: StreamFn | unde
               continue;
             }
             if (typeof msg.content === "string") {
-              msg.content = [
-                { type: "text", text: msg.content, cache_control: { type: "ephemeral" } },
-              ];
+              // Split at "# Project Context" so the static prefix is cached independently
+              // while the dynamic suffix (context files, runtime) varies per session.
+              const splitMarker = "\n# Project Context\n";
+              const splitIdx = msg.content.indexOf(splitMarker);
+              if (splitIdx !== -1) {
+                const prefix = msg.content.slice(0, splitIdx);
+                const suffix = msg.content.slice(splitIdx);
+                msg.content = [
+                  { type: "text", text: prefix, cache_control: { type: "ephemeral" } },
+                  { type: "text", text: suffix },
+                ];
+              } else {
+                msg.content = [
+                  { type: "text", text: msg.content, cache_control: { type: "ephemeral" } },
+                ];
+              }
             } else if (Array.isArray(msg.content) && msg.content.length > 0) {
               const last = msg.content[msg.content.length - 1];
               if (last && typeof last === "object") {

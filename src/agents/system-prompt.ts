@@ -626,6 +626,38 @@ export function buildAgentSystemPrompt(params: {
     lines.push("## Reasoning Format", reasoningHint, "");
   }
 
+  // Silent Replies + Heartbeats placed before # Project Context so that all static
+  // sections form a contiguous cache-friendly prefix (see proxy-stream-wrappers.ts).
+  if (!isMinimal) {
+    lines.push(
+      "## Silent Replies",
+      `When you have nothing to say, respond with ONLY: ${SILENT_REPLY_TOKEN}`,
+      "",
+      "⚠️ Rules:",
+      "- It must be your ENTIRE message — nothing else",
+      `- Never append it to an actual response (never include "${SILENT_REPLY_TOKEN}" in real replies)`,
+      "- Never wrap it in markdown or code blocks",
+      "",
+      `❌ Wrong: "Here's help... ${SILENT_REPLY_TOKEN}"`,
+      `❌ Wrong: "${SILENT_REPLY_TOKEN}"`,
+      `✅ Right: ${SILENT_REPLY_TOKEN}`,
+      "",
+    );
+  }
+
+  if (!isMinimal) {
+    lines.push(
+      "## Heartbeats",
+      heartbeatPromptLine,
+      "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
+      "HEARTBEAT_OK",
+      'OpenClaw treats a leading/trailing "HEARTBEAT_OK" as a heartbeat ack (and may discard it).',
+      'If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
+      "",
+    );
+  }
+
+  // --- Cache breakpoint: everything above is static; # Project Context varies per session ---
   const contextFiles = params.contextFiles ?? [];
   const validContextFiles = contextFiles.filter(
     (file) => typeof file.path === "string" && file.path.trim().length > 0,
@@ -649,37 +681,6 @@ export function buildAgentSystemPrompt(params: {
     for (const file of validContextFiles) {
       lines.push(`## ${file.path}`, "", file.content, "");
     }
-  }
-
-  // Skip silent replies for subagent/none modes
-  if (!isMinimal) {
-    lines.push(
-      "## Silent Replies",
-      `When you have nothing to say, respond with ONLY: ${SILENT_REPLY_TOKEN}`,
-      "",
-      "⚠️ Rules:",
-      "- It must be your ENTIRE message — nothing else",
-      `- Never append it to an actual response (never include "${SILENT_REPLY_TOKEN}" in real replies)`,
-      "- Never wrap it in markdown or code blocks",
-      "",
-      `❌ Wrong: "Here's help... ${SILENT_REPLY_TOKEN}"`,
-      `❌ Wrong: "${SILENT_REPLY_TOKEN}"`,
-      `✅ Right: ${SILENT_REPLY_TOKEN}`,
-      "",
-    );
-  }
-
-  // Skip heartbeats for subagent/none modes
-  if (!isMinimal) {
-    lines.push(
-      "## Heartbeats",
-      heartbeatPromptLine,
-      "If you receive a heartbeat poll (a user message matching the heartbeat prompt above), and there is nothing that needs attention, reply exactly:",
-      "HEARTBEAT_OK",
-      'OpenClaw treats a leading/trailing "HEARTBEAT_OK" as a heartbeat ack (and may discard it).',
-      'If something needs attention, do NOT include "HEARTBEAT_OK"; reply with the alert text instead.',
-      "",
-    );
   }
 
   lines.push(
