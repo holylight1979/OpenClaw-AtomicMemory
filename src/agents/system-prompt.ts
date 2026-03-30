@@ -12,10 +12,11 @@ import { sanitizeForPromptLiteral } from "./sanitize-for-prompt.js";
 /**
  * Controls which hardcoded sections are included in the system prompt.
  * - "full": All sections (default, for main agent)
+ * - "focused": Like minimal but keeps Safety/Tooling/Workspace/Runtime; also skips Skills
  * - "minimal": Reduced sections (Tooling, Workspace, Runtime) - used for subagents
  * - "none": Just basic identity line, no sections
  */
-export type PromptMode = "full" | "minimal" | "none";
+export type PromptMode = "full" | "focused" | "minimal" | "none";
 type OwnerIdDisplay = "raw" | "hash";
 
 function buildSkillsSection(params: { skillsPrompt?: string; readToolName: string }) {
@@ -389,7 +390,8 @@ export function buildAgentSystemPrompt(params: {
   const inlineButtonsEnabled = runtimeCapabilitiesLower.has("inlinebuttons");
   const messageChannelOptions = listDeliverableMessageChannels().join("|");
   const promptMode = params.promptMode ?? "full";
-  const isMinimal = promptMode === "minimal" || promptMode === "none";
+  const isMinimal = promptMode === "minimal" || promptMode === "none" || promptMode === "focused";
+  const isFocused = promptMode === "focused";
   const sandboxContainerWorkspace = params.sandboxInfo?.containerWorkspaceDir?.trim();
   const sanitizedWorkspaceDir = sanitizeForPromptLiteral(params.workspaceDir);
   const sanitizedSandboxContainerWorkspace = sandboxContainerWorkspace
@@ -490,7 +492,7 @@ export function buildAgentSystemPrompt(params: {
     "- openclaw gateway restart",
     "If unsure, ask the user to run `openclaw help` (or `openclaw gateway --help`) and paste the output.",
     "",
-    ...skillsSection,
+    ...(isFocused ? [] : skillsSection),
     ...memorySection,
     // Skip self-update for subagent/none modes
     hasGateway && !isMinimal ? "## OpenClaw Self-Update" : "",

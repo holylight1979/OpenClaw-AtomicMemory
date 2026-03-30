@@ -126,4 +126,26 @@ describe("resolveBootstrapContextForRun", () => {
 
     expect(files).toEqual([]);
   });
+
+  it("keeps only AGENTS.md and TOOLS.md in focused context mode", async () => {
+    const workspaceDir = await makeTempWorkspace("openclaw-bootstrap-");
+    await fs.writeFile(path.join(workspaceDir, "AGENTS.md"), "agents", "utf8");
+    await fs.writeFile(path.join(workspaceDir, "TOOLS.md"), "tools", "utf8");
+    await fs.writeFile(path.join(workspaceDir, "SOUL.md"), "persona", "utf8");
+    await fs.writeFile(path.join(workspaceDir, "IDENTITY.md"), "identity", "utf8");
+    await fs.writeFile(path.join(workspaceDir, "USER.md"), "user", "utf8");
+
+    const files = await resolveBootstrapFilesForRun({
+      workspaceDir,
+      contextMode: "focused",
+    });
+
+    const names = files.map((f) => f.name);
+    expect(names).toContain("AGENTS.md");
+    expect(names).toContain("TOOLS.md");
+    expect(names).not.toContain("SOUL.md");
+    expect(names).not.toContain("IDENTITY.md");
+    expect(names).not.toContain("USER.md");
+    expect(files.length).toBe(2);
+  });
 });

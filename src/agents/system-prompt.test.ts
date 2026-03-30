@@ -132,6 +132,66 @@ describe("buildAgentSystemPrompt", () => {
     expect(prompt).toContain("Subagent details");
   });
 
+  it("omits non-essential sections in focused prompt mode", () => {
+    const prompt = buildAgentSystemPrompt({
+      workspaceDir: "/tmp/openclaw",
+      promptMode: "focused",
+      ownerNumbers: ["+123"],
+      skillsPrompt:
+        "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
+      heartbeatPrompt: "ping",
+      toolNames: ["message", "memory_search", "gateway"],
+      docsPath: "/tmp/openclaw/docs",
+      ttsHint: "Voice (TTS) is enabled.",
+      modelAliasLines: ["- Opus: anthropic/claude-opus-4-5"],
+    });
+
+    // Kept sections
+    expect(prompt).toContain("## Safety");
+    expect(prompt).toContain("## Tooling");
+    expect(prompt).toContain("## Tool Call Style");
+    expect(prompt).toContain("## Workspace");
+    expect(prompt).toContain("## Runtime");
+
+    // Skipped sections (same as minimal)
+    expect(prompt).not.toContain("## Authorized Senders");
+    expect(prompt).not.toContain("## Memory Recall");
+    expect(prompt).not.toContain("## Documentation");
+    expect(prompt).not.toContain("## Reply Tags");
+    expect(prompt).not.toContain("## Messaging");
+    expect(prompt).not.toContain("## Voice (TTS)");
+    expect(prompt).not.toContain("## Silent Replies");
+    expect(prompt).not.toContain("## Heartbeats");
+    expect(prompt).not.toContain("## OpenClaw Self-Update");
+    expect(prompt).not.toContain("## Model Aliases");
+
+    // Skills are also skipped in focused mode (unlike minimal)
+    expect(prompt).not.toContain("## Skills");
+    expect(prompt).not.toContain("<available_skills>");
+  });
+
+  it("focused prompt is shorter than full prompt", () => {
+    const sharedParams = {
+      workspaceDir: "/tmp/openclaw",
+      ownerNumbers: ["+123"],
+      skillsPrompt:
+        "<available_skills>\n  <skill>\n    <name>demo</name>\n  </skill>\n</available_skills>",
+      heartbeatPrompt: "ping",
+      toolNames: ["message", "memory_search", "gateway"],
+      docsPath: "/tmp/openclaw/docs",
+      ttsHint: "Voice (TTS) is enabled.",
+      modelAliasLines: ["- Opus: anthropic/claude-opus-4-5"],
+    };
+
+    const fullPrompt = buildAgentSystemPrompt({ ...sharedParams, promptMode: "full" });
+    const focusedPrompt = buildAgentSystemPrompt({ ...sharedParams, promptMode: "focused" });
+
+    // focused should be meaningfully shorter
+    expect(focusedPrompt.length).toBeLessThan(fullPrompt.length);
+    // Rough check: at least 500 chars shorter (skills + messaging + voice + docs + etc.)
+    expect(fullPrompt.length - focusedPrompt.length).toBeGreaterThan(500);
+  });
+
   it("includes skills in minimal prompt mode when skillsPrompt is provided (cron regression)", () => {
     // Isolated cron sessions use promptMode="minimal" but must still receive skills.
     const skillsPrompt =

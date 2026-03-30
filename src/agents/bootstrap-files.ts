@@ -13,7 +13,7 @@ import {
   type WorkspaceBootstrapFile,
 } from "./workspace.js";
 
-export type BootstrapContextMode = "full" | "lightweight";
+export type BootstrapContextMode = "full" | "focused" | "lightweight";
 export type BootstrapContextRunKind = "default" | "heartbeat" | "cron";
 
 export function makeBootstrapWarn(params: {
@@ -44,6 +44,9 @@ function sanitizeBootstrapFiles(
   return sanitized;
 }
 
+/** Workspace files kept in "focused" context mode (essential operational files only). */
+const FOCUSED_BOOTSTRAP_FILES = new Set(["AGENTS.md", "TOOLS.md"]);
+
 function applyContextModeFilter(params: {
   files: WorkspaceBootstrapFile[];
   contextMode?: BootstrapContextMode;
@@ -51,9 +54,13 @@ function applyContextModeFilter(params: {
 }): WorkspaceBootstrapFile[] {
   const contextMode = params.contextMode ?? "full";
   const runKind = params.runKind ?? "default";
-  if (contextMode !== "lightweight") {
+  if (contextMode === "full") {
     return params.files;
   }
+  if (contextMode === "focused") {
+    return params.files.filter((file) => FOCUSED_BOOTSTRAP_FILES.has(file.name));
+  }
+  // lightweight mode
   if (runKind === "heartbeat") {
     return params.files.filter((file) => file.name === "HEARTBEAT.md");
   }
