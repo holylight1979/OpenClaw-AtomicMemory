@@ -131,6 +131,11 @@ const RULES: ClassificationRule[] = [
 /**
  * Classify a text fact into one of the 人事時地物 categories.
  * Uses rule-based pattern matching with weighted scoring.
+ *
+ * V2.5.1: `thing` is no longer the automatic fallback for zero-score facts.
+ * When no category matches confidently, returns "topic" as a safer default
+ * (topics are the broadest actionable category). The LLM classifier in
+ * `classifyFactWithLLM()` should be preferred for ambiguous cases.
  */
 export function classifyFact(text: string): AtomCategory {
   const scores: Record<AtomCategory, number> = {
@@ -154,7 +159,7 @@ export function classifyFact(text: string): AtomCategory {
   }
 
   // Find the highest scoring category
-  let best: AtomCategory = "thing"; // default fallback
+  let best: AtomCategory = "topic"; // default fallback — safer than "thing"
   let bestScore = 0;
 
   for (const [cat, score] of Object.entries(scores)) {
@@ -162,6 +167,12 @@ export function classifyFact(text: string): AtomCategory {
       bestScore = score;
       best = cat as AtomCategory;
     }
+  }
+
+  // If best score is too low (< 0.5) and winner is "thing", prefer "topic"
+  // to avoid thing/ becoming a catch-all bucket
+  if (best === "thing" && bestScore < 0.5) {
+    best = "topic";
   }
 
   return best;
@@ -200,11 +211,13 @@ export async function classifyFactWithLLM(
 只輸出 JSON: {"category": "person|topic|event|place|thing"}
 
 分類標準：
-- person（人）：關於人的資訊、關係、聯絡方式、偏好
-- topic（事）：專案、決策、工作項目、討論主題
+- person（人）：關於人的資訊、關係、聯絡方式、個人偏好
+- topic（事）：專案、決策、工作項目、討論主題、技術決策
 - event（時）：日期、時程、行程、截止日
 - place（地）：地點、地址、場所
-- thing（物）：工具、文件、物品、資源`,
+- thing（物）：僅限實體物品、硬體設備、具體工具。行為規則、偏好設定、抽象概念不屬於 thing
+
+注意：如果不確定，優先選 topic 而非 thing。thing 僅用於「摸得到」的實體。`,
       text,
       { jsonMode: true, temperature: 0.1, maxTokens: 50, timeoutMs: 3_000 },
     );

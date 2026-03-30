@@ -85,14 +85,21 @@ export class PromotionEngine {
    * - [臨] last-used > 30 days → archive to _distant/
    * - [觀] last-used > 60 days → flag for review
    * - [固] last-used > 90 days → remind but don't act
+   *
+   * V2.5.1: Also checks per-category overflow (thing > 20 atoms triggers warning).
    */
   async checkDecay(): Promise<DecayResult[]> {
     const atoms = await this.store.list();
     const results: DecayResult[] = [];
     const now = Date.now();
 
+    // Track category counts for overflow detection
+    const categoryCounts: Record<string, number> = {};
+
     for (const atom of atoms) {
       const atomRef = `${atom.category}/${atom.id}`;
+      categoryCounts[atom.category] = (categoryCounts[atom.category] ?? 0) + 1;
+
       const lastUsedMs = atom.lastUsed ? new Date(atom.lastUsed).getTime() : 0;
       const daysSinceUsed = lastUsedMs > 0
         ? Math.floor((now - lastUsedMs) / (1000 * 60 * 60 * 24))
@@ -120,6 +127,34 @@ export class PromotionEngine {
         daysSinceUsed,
         action: threshold.action,
       });
+    }
+
+    // Category overflow check: thing > 20 triggers aggressive [臨] cleanup
+    const THING_OVERFLOW_THRESHOLD = 20;
+    const thingCount = categoryCounts["thing"] ?? 0;
+    if (thingCount > THING_OVERFLOW_THRESHOLD) {
+      // Archive [臨] things older than 7 days (more aggressive than the 30-day default)
+      const thingAtoms = atoms.filter((a) => a.category === "thing" && a.confidence === "[臨]");
+      for (const atom of thingAtoms) {
+        const lastUsedMs = atom.lastUsed ? new Date(atom.lastUsed).getTime() : 0;
+        const daysSinceUsed = lastUsedMs > 0
+          ? Math.floor((now - lastUsedMs) / (1000 * 60 * 60 * 24))
+          : 999;
+        if (daysSinceUsed >= 7) {
+          const atomRef = `${atom.category}/${atom.id}`;
+          // Only archive if not already handled above
+          const alreadyHandled = results.some((r) => r.atomRef === atomRef && r.action === "archived");
+          if (!alreadyHandled) {
+            await this.store.moveToDistant(atom.category, atom.id);
+            results.push({
+              atomRef,
+              confidence: atom.confidence,
+              daysSinceUsed,
+              action: "archived",
+            });
+          }
+        }
+      }
     }
 
     return results;

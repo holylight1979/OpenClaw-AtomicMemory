@@ -20,7 +20,7 @@ import type { AtomCategory, Confidence, DedupResult, DedupVerdict, ExtractedFact
 
 const EXTRACTION_SYSTEM_PROMPT = `Extract reusable factual knowledge from the conversation below.
 Output a JSON array (always an array, even for a single item). Each item:
-- "text": concise fact (≤150 chars)
+- "text": concise fact (≤150 chars, ≥15 chars)
 - "category": one of person | topic | event | place | thing
 - "who": who stated or owns this fact (name, "user", or null)
 - "about": subject of the fact (name, object, or null)
@@ -41,7 +41,17 @@ confidence_hint:
 - "normal": everything else
 
 Extract: personal info, preferences, contacts, decisions, schedules, locations, relationships, resources, pitfalls.
-Skip: greetings, vague guesses, one-time reactions, pleasantries.
+
+MUST SKIP (do NOT extract these):
+- Agent/assistant's own words, proposals, or conversational fragments (e.g. "我可以幫你整理", "讓我看看")
+- Observations about current state that are ephemeral (e.g. "目前是空的", "目前啟用中", "這次查到沒有")
+- Behavioral rules or instructions from system prompts (e.g. "never send half-baked replies", "ask before acting")
+- Session-specific data: session IDs, UUIDs, temporary tokens
+- Single words or names without any factual context (e.g. just "holylight" or "Asia/Taipei" alone)
+- Greetings, vague guesses, one-time reactions, pleasantries
+- Status queries or their answers unless they reveal a persistent fact
+
+Only extract knowledge stated by the USER or confirmed persistent facts.
 No facts → output [].
 Example: [{"text":"User lives in Taipei","category":"place","who":"user","about":"user","when":null,"where":"Taipei","confidence_hint":"normal"}]`;
 
@@ -103,6 +113,41 @@ const WRITE_GATE_RULES: WriteGateRule[] = [
     score: -0.10,
     test: (t) =>
       /\b(timeout|retry|retries)\b|暫時|臨時|測試|test[ing]*\b/i.test(t),
+  },
+  {
+    label: "ephemeral observation (目前/現在 + state)",
+    score: -0.30,
+    test: (t) =>
+      /(?:目前|現在|這次查|剛才|剛剛).*?(?:是空的|沒有|空白|啟用中|關閉中|不存在|尚未|還沒)/.test(t) ||
+      /(?:is (?:currently|now|empty)|right now|at the moment).*?\b(?:empty|none|disabled|not found)\b/i.test(t),
+  },
+  {
+    label: "session-specific data (UUID/session-id)",
+    score: -0.50,
+    test: (t) =>
+      /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i.test(t) ||
+      /\bsession[-_]?(?:id|key)\b/i.test(t) ||
+      /\bstate-[0-9a-f]{8,}\b/i.test(t),
+  },
+  {
+    label: "agent conversational fragment",
+    score: -0.30,
+    test: (t) =>
+      /^(?:我(?:可以|來|幫你|先|直接)|讓我|好的|沒問題|了解)/.test(t) ||
+      /^(?:I (?:can|will|'ll)|Let me|Sure|OK|Got it)/i.test(t),
+  },
+  {
+    label: "system prompt behavioral rule",
+    score: -0.40,
+    test: (t) =>
+      /\b(?:never|always|must|should)\b.{0,30}\b(?:reply|respond|send|act|follow|obey)\b/i.test(t) ||
+      /(?:永遠不要|永遠|必須|應該).{0,15}(?:回覆|回應|發送|行動|遵循|遵守)/.test(t) ||
+      /\b(?:private.{0,10}stay|half.?baked|when.in.doubt)\b/i.test(t),
+  },
+  {
+    label: "content too short (<15 chars) for meaningful knowledge",
+    score: -0.50,
+    test: (t) => t.length < 15,
   },
 ];
 
@@ -201,6 +246,7 @@ export class CaptureEngine {
    * Extract text content from message objects.
    * Handles both string content and content block arrays.
    * Only processes user and assistant messages.
+   * Tags each message with [USER] or [ASSISTANT] so the LLM can distinguish sources.
    */
   private extractConversationText(messages: unknown[]): string {
     const texts: string[] = [];
@@ -212,6 +258,7 @@ export class CaptureEngine {
       const role = msgObj.role;
       if (role !== "user" && role !== "assistant") continue;
 
+      const roleTag = role === "user" ? "[USER]" : "[ASSISTANT]";
       const content = msgObj.content;
 
       if (typeof content === "string") {
@@ -219,7 +266,7 @@ export class CaptureEngine {
         if (content.includes("<relevant-memories>") || content.includes("<atomic-memories>")) {
           continue;
         }
-        texts.push(content);
+        texts.push(`${roleTag} ${content}`);
         continue;
       }
 
@@ -235,7 +282,7 @@ export class CaptureEngine {
           ) {
             const text = (block as Record<string, unknown>).text as string;
             if (!text.includes("<relevant-memories>") && !text.includes("<atomic-memories>")) {
-              texts.push(text);
+              texts.push(`${roleTag} ${text}`);
             }
           }
         }
@@ -278,7 +325,7 @@ export class CaptureEngine {
         const obj = item as Record<string, unknown>;
 
         const text = typeof obj.text === "string" ? obj.text.trim() : "";
-        if (text.length < 5 || text.length > 200) continue;
+        if (text.length < 10 || text.length > 200) continue;
 
         // Skip prompt injection attempts
         if (looksLikePromptInjection(text)) continue;

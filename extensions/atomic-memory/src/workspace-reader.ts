@@ -22,6 +22,12 @@ const TEST_CONTENT_PATTERNS = [
   /test\s*(code|data|token|key|value)/i,
   /驗證碼/,
   /^XTEST|^ABC\d{3}|MEMORY-OK/i,
+  // Catch common test data patterns
+  /^(abc|xyz|test|demo|hello|foo|bar)\d*$/i,
+  /使用者的名字是小明/,
+  /最喜歡的水果/,
+  /^[\w-]{1,8}$/, // Very short single-token entries (likely test slugs)
+  /測試記憶|測試用|test.*memory|memory.*test/i,
 ];
 
 export function isTestFact(text: string): boolean {

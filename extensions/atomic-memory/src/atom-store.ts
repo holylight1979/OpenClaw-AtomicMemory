@@ -149,9 +149,12 @@ export class AtomStore {
     }
 
     if (patch.appendKnowledge) {
-      atom.knowledge = atom.knowledge
-        ? `${atom.knowledge}\n- ${patch.appendKnowledge}`
-        : `- ${patch.appendKnowledge}`;
+      // Dedup: skip if near-identical knowledge line already exists
+      if (!atom.knowledge || !knowledgeContainsDuplicate(atom.knowledge, patch.appendKnowledge)) {
+        atom.knowledge = atom.knowledge
+          ? `${atom.knowledge}\n- ${patch.appendKnowledge}`
+          : `- ${patch.appendKnowledge}`;
+      }
     }
 
     if (patch.appendEvolution) {
@@ -202,6 +205,8 @@ export class AtomStore {
    * Find an existing atom that matches the given fact, or create a new one.
    * For person atoms, tries to match by trigger keywords.
    * For other categories, creates new atom if no close match found.
+   *
+   * V2.5.1: Tightened trigger matching + knowledge dedup before append.
    */
   async findOrCreate(
     category: AtomCategory,
@@ -212,23 +217,37 @@ export class AtomStore {
     const existing = await this.list(category);
     for (const atom of existing) {
       for (const trigger of atom.triggers) {
-        if (fact.text.includes(trigger) || trigger.includes(fact.text.slice(0, 20))) {
-          // Append to existing atom
+        // Require trigger length ≥ 2 and bidirectional containment with min overlap
+        if (trigger.length < 2) continue;
+        const matched =
+          (fact.text.includes(trigger) && trigger.length >= 3) ||
+          (trigger.length >= 8 && trigger.includes(fact.text.slice(0, 20)));
+        if (!matched) continue;
+
+        // Dedup: skip if identical or near-identical knowledge line already exists
+        if (atom.knowledge && knowledgeContainsDuplicate(atom.knowledge, fact.text)) {
+          // Already recorded — just touch lastUsed
           await this.update(category, atom.id, {
-            appendKnowledge: fact.text,
             lastUsed: new Date().toISOString().slice(0, 10),
-            appendEvolution: `${new Date().toISOString().slice(0, 10)}: 新增知識 — ${fact.text.slice(0, 40)}`,
-            ...(options?.channel
-              ? { sources: [{ channel: options.channel, senderId: options.senderId }] }
-              : {}),
           });
           return (await this.get(category, atom.id))!;
         }
+
+        // Append to existing atom
+        await this.update(category, atom.id, {
+          appendKnowledge: fact.text,
+          lastUsed: new Date().toISOString().slice(0, 10),
+          appendEvolution: `${new Date().toISOString().slice(0, 10)}: 新增知識 — ${fact.text.slice(0, 40)}`,
+          ...(options?.channel
+            ? { sources: [{ channel: options.channel, senderId: options.senderId }] }
+            : {}),
+        });
+        return (await this.get(category, atom.id))!;
       }
     }
 
     // Create new atom
-    const id = slugify(fact.text);
+    const id = generateSemanticSlug(fact.text, fact.category);
     const today = new Date().toISOString().slice(0, 10);
 
     const newAtom: Atom = {
@@ -318,17 +337,129 @@ export class AtomStore {
 // ============================================================================
 
 /**
- * Generate a URL-safe slug from text.
- * Keeps CJK characters, replaces spaces with hyphens.
+ * Tokenize text for dedup comparison.
+ * CJK characters are split into bigrams; English words are kept as-is.
  */
-function slugify(text: string): string {
-  return text
-    .trim()
-    .slice(0, 40)
+function tokenize(text: string): Set<string> {
+  const tokens = new Set<string>();
+  const lower = text.toLowerCase();
+
+  // Extract English words (3+ chars)
+  for (const m of lower.matchAll(/[a-z][a-z0-9]{2,}/g)) {
+    tokens.add(m[0]);
+  }
+
+  // Extract CJK bigrams (overlapping pairs for better granularity)
+  const cjk = lower.replace(/[^\u4e00-\u9fff]/g, "");
+  for (let i = 0; i < cjk.length - 1; i++) {
+    tokens.add(cjk.slice(i, i + 2));
+  }
+
+  // Digits (3+ consecutive)
+  for (const m of lower.matchAll(/\d{3,}/g)) {
+    tokens.add(m[0]);
+  }
+
+  return tokens;
+}
+
+/**
+ * Check if the existing knowledge section already contains a near-duplicate of newText.
+ * Uses token overlap scoring (CJK bigrams + English words).
+ */
+function knowledgeContainsDuplicate(existingKnowledge: string, newText: string): boolean {
+  const newTokens = tokenize(newText);
+  if (newTokens.size === 0) return true; // empty fact — treat as dup
+
+  for (const line of existingKnowledge.split("\n")) {
+    const trimmed = line.replace(/^-\s*/, "").trim();
+    if (trimmed.length < 5) continue;
+
+    const lineTokens = tokenize(trimmed);
+    if (lineTokens.size === 0) continue;
+
+    // Token overlap ratio (against the smaller set)
+    let overlap = 0;
+    for (const t of newTokens) {
+      if (lineTokens.has(t)) overlap++;
+    }
+    const ratio = overlap / Math.min(newTokens.size, lineTokens.size);
+    if (ratio >= 0.80) return true;
+  }
+  return false;
+}
+
+/**
+ * Generate a semantic slug for atom filenames.
+ *
+ * Strategy: extract key entities (proper nouns, CJK names, technical terms)
+ * and compose a readable kebab-case slug. Falls back to truncated text only
+ * if no entities are found.
+ */
+function generateSemanticSlug(text: string, category: AtomCategory): string {
+  const parts: string[] = [];
+
+  // 1. Extract English proper nouns and tech terms
+  const englishEntities = text.match(/[A-Z][a-zA-Z]{2,}/g);
+  if (englishEntities) {
+    for (const e of englishEntities.slice(0, 2)) {
+      parts.push(e.toLowerCase());
+    }
+  }
+
+  // 2. Extract CJK named entities (after relationship markers)
+  const cjkEntityPatterns = [
+    /(?:叫做?|名(?:字|為)|稱為)\s*([\u4e00-\u9fff]{1,8})/g,
+    /(?:住在|位於|搬到)\s*([\u4e00-\u9fff]{2,8})/g,
+  ];
+  for (const pattern of cjkEntityPatterns) {
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      parts.push(match[1]);
+    }
+  }
+
+  // 3. Extract CJK subject-verb-object core
+  const svoMatch = text.match(/([\u4e00-\u9fff]{2,4})(?:決定|使用|設定|偏好|負責|喜歡|住在)([\u4e00-\u9fff]{2,6})/);
+  if (svoMatch) {
+    if (!parts.includes(svoMatch[1])) parts.push(svoMatch[1]);
+    if (!parts.includes(svoMatch[2])) parts.push(svoMatch[2]);
+  }
+
+  // 4. Fallback: first meaningful CJK phrases
+  if (parts.length === 0) {
+    const cjkPhrases = text.match(/[\u4e00-\u9fff]{2,6}/g);
+    if (cjkPhrases) {
+      for (const p of cjkPhrases.slice(0, 2)) {
+        if (!parts.includes(p)) parts.push(p);
+      }
+    }
+  }
+
+  // 5. Fallback: ASCII words
+  if (parts.length === 0) {
+    const words = text.replace(/[^\w]/g, " ").split(/\s+/).filter((w) => w.length >= 3);
+    parts.push(...words.slice(0, 3));
+  }
+
+  // Compose slug
+  let slug = parts
+    .join("-")
+    .replace(/[<>:"/\\|?*`]/g, "")
     .replace(/\s+/g, "-")
-    .replace(/[<>:"/\\|?*]/g, "") // Remove filesystem-unsafe chars
-    .replace(/-+$/, "") // Trim trailing hyphens
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "")
     .toLowerCase();
+
+  // Ensure reasonable length (max 40 chars)
+  if (slug.length > 40) slug = slug.slice(0, 40).replace(/-+$/, "");
+
+  // Last resort: category + timestamp
+  if (!slug || slug.length < 2) {
+    slug = `${category}-${Date.now().toString(36)}`;
+  }
+
+  return slug;
 }
 
 /**
